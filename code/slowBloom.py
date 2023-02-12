@@ -38,6 +38,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         curlayer += 1
         allblocks.append(self)
         self.emptyParms = [p for p in self.parameters()]
+        self.hasParms = False
 
     def assignParms(self,pname,v):
         if pname==pnames[0]: self.input_layernorm.weight = v
@@ -54,8 +55,9 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         if pname==pnames[11]: self.mlp.dense_4h_to_h.bias = v
 
     def emptyLayer(self):
-        for i in range(len(pnames)): self.assignParms(pnames[i],self.emptyParms[i])
+        for i in range(len(pnames)):self.assignParms(pnames[i],self.emptyParms[i])
         gc.collect()
+        self.hasParms = False
 
     def loadLayer(self,l):
         print("load weights from disk")
@@ -69,6 +71,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
             self.assignParms(pnames[i],prebloc)
         t1 = time.time()
         print("preloaded OK",l,t1-t0)
+        self.hasParms = True
 
     def forward(
         self,
@@ -106,4 +109,12 @@ print("empty model loaded",t1,"RAM",resource.getrusage(resource.RUSAGE_SELF).ru_
 
 allblocks[0].loadLayer(49)
 allblocks[0].emptyLayer()
+
+toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
+prompt = toker('"Do the rich need more money?" Is this question a rhetorical question, yes or no?')
+plen = len(prompt['input_ids'][0])
+print("prompt len",plen)
+input()
+out = model(**prompt)
+print("model generate finished",out)
 
