@@ -9,7 +9,8 @@ import gc
 
 wd = "/home/xtof/sda5/bloom/"
 wd = "/mnt/dos/xtof/"
-curlayer = 0
+wd = "/home/xtof/nas1/TALC/Synalp/Models/bloom/bloom/"
+
 allblocks = []
 
 pnames = (
@@ -33,9 +34,8 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         self.memAllocated = False
         # there's one such block created per layer
         # when the first one is created, it'll be the only one with actual parameters
-        global curlayer, allblocks
-        self.numLayer = curlayer
-        curlayer += 1
+        global allblocks
+        self.numLayer = len(allblocks)
         allblocks.append(self)
         self.emptyParms = [p for p in self.parameters()]
         self.hasParms = False
@@ -70,7 +70,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
             prebloc = torch.nn.Parameter(prebloc,requires_grad=False)
             self.assignParms(pnames[i],prebloc)
         t1 = time.time()
-        print("preloaded OK",l,t1-t0)
+        print("preloaded OK",l,t1-t0,"RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
         self.hasParms = True
 
     def forward(
@@ -87,34 +87,47 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         # hidden_states = hidden_states.detach()
         # if not alibi==None: alibi = alibi.detach()
         # if not attention_mask==None: attention_mask = attention_mask.detach()
-
+        
+        print("calling forward layer",self.numLayer,self.hasParms)
         t0 = time.time()
-        print("debug0",torch.norm(self.input_layernorm.weight).item())
         y = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache, output_attentions)
         t1 = time.time()
-        print("called forward",self.numlayer,t1-t0,torch.norm(hidden_states).item(),torch.norm(y[0]).item())
+        # print("called forward",self.numlayer,t1-t0,torch.norm(hidden_states).item(),torch.norm(y[0]).item())
         return y
 
+def initModel():
+    print("loading empty model")
+    t0 = time.time()
+    model=None
+    with init_empty_weights():
+        config = BloomConfig.from_pretrained(wd)
+        transformers.models.bloom.modeling_bloom.BloomBlock = MyBloomBlock
+        model = transformers.models.bloom.modeling_bloom.BloomForCausalLM(config)
+    t1 = time.time()
+    t1-=t0
+    print("empty model loaded",t1,"RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
-print("loading empty model")
-t0 = time.time()
-model=None
-with init_empty_weights():
-    config = BloomConfig.from_pretrained(wd)
-    transformers.models.bloom.modeling_bloom.BloomBlock = MyBloomBlock
-    model = transformers.models.bloom.modeling_bloom.BloomForCausalLM(config)
-t1 = time.time()
-t1-=t0
-print("empty model loaded",t1,"RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    parms = torch.load(wd+"pytorch_model_00001-of-00072.bin")
+    vparms = parms['word_embeddings.weight'].to(dtype=torch.float32)
+    model.transformer.word_embeddings = torch.nn.Embedding.from_pretrained(vparms,freeze=True)
+    vparms = parms['word_embeddings_layernorm.weight'].to(dtype=torch.float32)
+    model.transformer.word_embeddings_layernorm.weight = torch.nn.Parameter(vparms,requires_grad=False)
+    vparms = parms['word_embeddings_layernorm.bias'].to(dtype=torch.float32)
+    model.transformer.word_embeddings_layernorm.bias = torch.nn.Parameter(vparms,requires_grad=False)
+    model.lm_head.weight = model.transformer.word_embeddings.weight
+    del parms
+    gc.collect()
+    print("embeddings created","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
-allblocks[0].loadLayer(49)
-allblocks[0].emptyLayer()
+    allblocks[0].loadLayer(0)
+    # allblocks[0].emptyLayer()
+    return model
 
 toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
 prompt = toker('"Do the rich need more money?" Is this question a rhetorical question, yes or no?')
-plen = len(prompt['input_ids'][0])
-print("prompt len",plen)
-input()
-out = model(**prompt)
-print("model generate finished",out)
+x = torch.LongTensor([prompt['input_ids']])
+print("prompt",x)
+model = initModel()
+out = model(x)
+print("model forward finished",out)
 
