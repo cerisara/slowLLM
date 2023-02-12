@@ -105,4 +105,5 @@ t1-=t0
 print("empty model loaded",t1,"RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
 allblocks[0].loadLayer(49)
+allblocks[0].emptyLayer()
 
