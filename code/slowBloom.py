@@ -148,7 +148,6 @@ def initModel():
     t1 = time.time()
     t1-=t0
     print("empty model loaded",t1,"RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
-    # allblocks[0].emptyLayer()
     return model
 
 def loadEmbeddings(model):
@@ -187,16 +186,17 @@ if True:
     loadEmbeddings(model)
     allblocks[0].loadLayer(0)
     out = model(x) # save layer 0 output to disk
+    allblocks[0].emptyLayer()
 
     for i in range(1,69):
-        model = initModel()
         allblocks[i].loadInputs = True
         allblocks[i].loadLayer(i)
         out = model(x) # save layer i output to disk
+        allblocks[i].emptyLayer()
+        allblocks[i].loadInputs = False
 
-    model = initModel()
-    loadEmbeddings(model)
     loadLMHead(model)
+    allblocks[69].loadInputs = True
     allblocks[69].loadLayer(69)
 
 out = model(x)
