@@ -28,6 +28,27 @@ pnames = (
         'mlp.dense_4h_to_h.bias',
         )
 
+class MyLinear(torch.nn.Linear):
+    def __init__(self, *args):
+        super().__init__(1,1)
+        self.isLoaded = False
+
+    def forward(self, x):
+        if self.isLoaded:
+            return super().forward(x)
+        return torch.zeros((1,250000))
+
+class MyEmbeddings(torch.nn.Embedding):
+    def __init__(self, *args):
+        super().__init__(1,1)
+        self.dummy = torch.zeros((1,14336))
+        self.isLoaded = False
+
+    def forward(self, x):
+        if self.isLoaded:
+            return super().forward(x)
+        else: return self.dummy.expand((x.size(0),14336))
+
 class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
     def __init__(self, config):
         super().__init__(config)
@@ -39,6 +60,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         allblocks.append(self)
         self.emptyParms = [p for p in self.parameters()]
         self.hasParms = False
+        self.loadInputs = False
 
     def assignParms(self,pname,v):
         if pname==pnames[0]: self.input_layernorm.weight = v
@@ -88,12 +110,24 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         # if not alibi==None: alibi = alibi.detach()
         # if not attention_mask==None: attention_mask = attention_mask.detach()
         
-        print("calling forward layer",self.numLayer,self.hasParms)
+        print("calling forward layer",self.numLayer,self.hasParms, hidden_states.device)
         t0 = time.time()
-        y = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache, output_attentions)
+
+        if self.hasParms:
+            if self.loadInputs:
+                hidden_states = torch.load("layerout."+str(self.numLayer-1)+".0")
+                attention_mask = torch.load("layerout."+str(self.numLayer-1)+".1")
+            y = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache, output_attentions)
+            self.saveOutputs(y)
+        else:
+            y=(hidden_states, attention_mask)
         t1 = time.time()
-        # print("called forward",self.numlayer,t1-t0,torch.norm(hidden_states).item(),torch.norm(y[0]).item())
+        print("called forward",self.numLayer,len(y),t1-t0)
         return y
+
+    def saveOutputs(self,y):
+        torch.save(y[0],"layerout."+str(self.numLayer)+".0")
+        torch.save(y[1],"layerout."+str(self.numLayer)+".1")
 
 def initModel():
     print("loading empty model")
@@ -103,31 +137,75 @@ def initModel():
         config = BloomConfig.from_pretrained(wd)
         transformers.models.bloom.modeling_bloom.BloomBlock = MyBloomBlock
         model = transformers.models.bloom.modeling_bloom.BloomForCausalLM(config)
+
+    model.transformer.word_embeddings = MyEmbeddings()
+    model.transformer.word_embeddings_layernorm.weight = torch.nn.Parameter(torch.zeros(model.transformer.word_embeddings_layernorm.weight.size()),requires_grad=False)
+    model.transformer.word_embeddings_layernorm.bias = torch.nn.Parameter(torch.zeros(model.transformer.word_embeddings_layernorm.bias.size()),requires_grad=False)
+    model.transformer.ln_f.weight = torch.nn.Parameter(torch.zeros(model.transformer.ln_f.weight.size()),requires_grad=False)
+    model.transformer.ln_f.bias = torch.nn.Parameter(torch.zeros(model.transformer.ln_f.bias.size()),requires_grad=False)
+    model.lm_head = MyLinear()
+
     t1 = time.time()
     t1-=t0
     print("empty model loaded",t1,"RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    # allblocks[0].emptyLayer()
+    return model
 
+def loadEmbeddings(model):
+    # takes approx. 21MB
     parms = torch.load(wd+"pytorch_model_00001-of-00072.bin")
     vparms = parms['word_embeddings.weight'].to(dtype=torch.float32)
     model.transformer.word_embeddings = torch.nn.Embedding.from_pretrained(vparms,freeze=True)
+    model.transformer.word_embeddings.isLoaded = True
     vparms = parms['word_embeddings_layernorm.weight'].to(dtype=torch.float32)
     model.transformer.word_embeddings_layernorm.weight = torch.nn.Parameter(vparms,requires_grad=False)
     vparms = parms['word_embeddings_layernorm.bias'].to(dtype=torch.float32)
     model.transformer.word_embeddings_layernorm.bias = torch.nn.Parameter(vparms,requires_grad=False)
     model.lm_head.weight = model.transformer.word_embeddings.weight
+    model.lm_head.isLoaded = True
     del parms
     gc.collect()
     print("embeddings created","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
-    allblocks[0].loadLayer(0)
-    # allblocks[0].emptyLayer()
-    return model
+def loadLMHead(model):
+    parms = torch.load(wd+"pytorch_model_00072-of-00072.bin")
+    vparms = parms['ln_f.weight'].to(dtype=torch.float32)
+    model.transformer.ln_f.weight = torch.nn.Parameter(vparms,requires_grad=False)
+    vparms = parms['ln_f.bias'].to(dtype=torch.float32)
+    model.transformer.ln_f.bias = torch.nn.Parameter(vparms,requires_grad=False)
+    del parms
+    gc.collect()
+    print("LMhead loaded","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
 toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
 prompt = toker('"Do the rich need more money?" Is this question a rhetorical question, yes or no?')
 x = torch.LongTensor([prompt['input_ids']])
 print("prompt",x)
-model = initModel()
+
+if True:
+    model = initModel()
+    loadEmbeddings(model)
+    allblocks[0].loadLayer(0)
+    out = model(x) # save layer 0 output to disk
+
+    for i in range(1,69):
+        model = initModel()
+        allblocks[i].loadInputs = True
+        allblocks[i].loadLayer(i)
+        out = model(x) # save layer i output to disk
+
+    model = initModel()
+    loadEmbeddings(model)
+    loadLMHead(model)
+    allblocks[69].loadLayer(69)
+
 out = model(x)
-print("model forward finished",out)
+print("model forward finished")
+print("out",out.logits.shape, out.logits.device)
+logits = out.logits.view(-1)
+print("yes",logits[18260].item())
+print("no",logits[654].item())
+
+# token of 'yes': 18260
+# token of 'no' : 654
 
