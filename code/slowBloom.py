@@ -116,18 +116,20 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         if self.hasParms:
             if self.loadInputs:
                 hidden_states = torch.load("layerout."+str(self.numLayer-1)+".0")
-                attention_mask = torch.load("layerout."+str(self.numLayer-1)+".1")
-            y = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache, output_attentions)
-            self.saveOutputs(y)
+                # attention_mask = torch.load("layerout."+str(self.numLayer-1)+".1")
+            y0 = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache=False, output_attentions=False)
+            self.saveOutputs(y0)
+            y = (y0[0], attention_mask)
         else:
             y=(hidden_states, attention_mask)
         t1 = time.time()
-        print("called forward",self.numLayer,len(y),t1-t0)
+        print("called forward",self.numLayer,len(y),t1-t0,self.hasParms,self.loadInputs)
         return y
 
     def saveOutputs(self,y):
         torch.save(y[0],"layerout."+str(self.numLayer)+".0")
-        torch.save(y[1],"layerout."+str(self.numLayer)+".1")
+        # I have no cue what's in this tuple ??
+        # torch.save(y[1],"layerout."+str(self.numLayer)+".1")
 
 def initModel():
     print("loading empty model")
