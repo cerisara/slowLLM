@@ -210,3 +210,8 @@ print("no",logits[654].item())
 # token of 'yes': 18260
 # token of 'no' : 654
 
+# output of a block is a tuple with:
+# - hidden_states
+# - optional: presents
+# - optional: self-att
+
