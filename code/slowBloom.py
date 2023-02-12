@@ -36,6 +36,7 @@ class MyLinear(torch.nn.Linear):
     def forward(self, x):
         if self.isLoaded:
             return super().forward(x)
+        # I dont know exactly the lexicon size, but I only query yes/no anyway so...
         return torch.zeros((1,250000))
 
 class MyEmbeddings(torch.nn.Embedding):
