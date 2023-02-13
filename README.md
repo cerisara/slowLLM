@@ -1,17 +1,37 @@
-Using Large Language Models (starting with Bloomz) slowly, on commodity GPU-free desktops.
+## What is this soft about?
 
-## Use cases
+Using Large Language Models (starting with Bloom) slowly, on commodity GPU-free desktops.
 
-- No way to do text generation, this would be far too slow with autoregressive models;
-may be in the future  with text diffusion models, but definitely not now.
-- So there are 2 main use cases:
-    - generate text embeddings for further processing
-    - answering binary yes/no question-answering tasks
+## Requirements
 
-This may seem very limited (and it is, yes), but there are many tasks that can be framed as a
-yes/no question and could thus benefit from the power of LLM.
+- desktop or laptop with at least 25GB of RAM (could be reduced <16GB, PR welcome)
+- harddrive with 400GB free to store Bloom's parameters
+- that's it! no GPU is needed
+- optional: a fast hard drive (the best would be a NVMe ssd)
 
-## Speed and requirements
+## How to use
+
+- download or clone this repo
+- install in conda/pip pytorch + transformers + accelerate
+- write in the text file code/questions.txt one yes/no question per line
+- cd code; python slowLLM.py
+
+Example of usage:
+```
+
+```
+
+## Limitations
+
+- It does not support real text generation, this would be far too slow with autoregressive models;
+may be in the future  with text diffusion models, but not now.
+- So it is limited for now to only answer yes/no questions: many tasks can be framed as yes/no questions,
+but this may require some thinking.
+- Answering 10 questions with Bloom takes about the same time as answering one question:
+this time ranges between 7' to 70', depending on the speed of your hard drive.
+So it's best to write all questions at once before calling the program.
+
+## Detailed speed and requirements
 
 - RAM: 25GB (but it should be possible to reduce it to 16GB)
 - passing data through 1 layer: 0.5s (I tested with 16x Intel(R) Xeon(R) CPU E5-2609 v4 @ 1.70GHz)
