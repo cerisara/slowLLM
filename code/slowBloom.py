@@ -12,6 +12,7 @@ wd = "/mnt/dos/xtof/"
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloom/bloom/"
 
 allblocks = []
+filesuffix = ""
 
 pnames = (
         'input_layernorm.weight',
@@ -116,7 +117,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
 
         if self.hasParms:
             if self.loadInputs:
-                hidden_states = torch.load("layerout."+str(self.numLayer-1)+".0")
+                hidden_states = torch.load("layerout."+str(self.numLayer-1)+filesuffix)
                 # attention_mask = torch.load("layerout."+str(self.numLayer-1)+".1")
             y0 = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache=False, output_attentions=False)
             self.saveOutputs(y0)
@@ -128,7 +129,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         return y
 
     def saveOutputs(self,y):
-        torch.save(y[0],"layerout."+str(self.numLayer)+".0")
+        torch.save(y[0],"layerout."+str(self.numLayer)+filesuffix)
         # I have no cue what's in this tuple ??
         # torch.save(y[1],"layerout."+str(self.numLayer)+".1")
 
@@ -180,34 +181,50 @@ def loadLMHead(model):
     print("LMhead loaded","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
 toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
-prompt = toker('"Do the rich need more money?" Is this question a rhetorical question, yes or no?')
-x = torch.LongTensor([prompt['input_ids']])
-print("prompt",x)
+model = initModel()
+loadEmbeddings(model)
+loadLMHead(model)
 
-if True:
-    model = initModel()
-    loadEmbeddings(model)
-    allblocks[0].loadLayer(0)
-    out = model(x) # save layer 0 output to disk
-    allblocks[0].emptyLayer()
 
-    for i in range(1,69):
-        allblocks[i].loadInputs = True
-        allblocks[i].loadLayer(i)
-        out = model(x) # save layer i output to disk
-        allblocks[i].emptyLayer()
-        allblocks[i].loadInputs = False
+allblocks[0].loadLayer(0)
+with open("sentences.txt","r") as f:
+    for ui,l in enumerate(f.readlines()):
+        filesuffix = "."+str(ui)
+        prompt = toker(l)
+        x = torch.LongTensor([prompt['input_ids']])
+        print("prompt",x)
+        out = model(x) # save layer 0 output to disk
+allblocks[0].emptyLayer()
 
-    loadLMHead(model)
-    allblocks[69].loadInputs = True
-    allblocks[69].loadLayer(69)
+for i in range(1,69):
+    allblocks[i].loadInputs = True
+    allblocks[i].loadLayer(i)
+    with open("sentences.txt","r") as f:
+        for ui,l in enumerate(f.readlines()):
+            filesuffix = "."+str(ui)
+            prompt = toker(l)
+            x = torch.LongTensor([prompt['input_ids']])
+            print("prompt",x)
+            out = model(x) # save layer i output to disk
+    allblocks[i].emptyLayer()
+    allblocks[i].loadInputs = False
 
-out = model(x)
-print("model forward finished")
-print("out",out.logits.shape, out.logits.device)
-logits = out.logits.view(-1)
-print("yes",logits[18260].item())
-print("no",logits[654].item())
+allblocks[69].loadInputs = True
+allblocks[69].loadLayer(69)
+with open("sentences.txt","r") as f:
+    for ui,l in enumerate(f.readlines()):
+        filesuffix = "."+str(ui)
+        prompt = toker(l)
+        x = torch.LongTensor([prompt['input_ids']])
+        print("prompt",x)
+        out = model(x)
+        print("model forward finished")
+        print("out",out.logits.shape, out.logits.device)
+        logits = out.logits.view(-1)
+        print("yes",logits[18260].item(),ui)
+        print("no",logits[654].item(),ui)
+allblocks[69].emptyLayer()
+allblocks[69].loadInputs = False
 
 # token of 'yes': 18260
 # token of 'no' : 654
