@@ -6,14 +6,19 @@ from accelerate import init_empty_weights
 from typing import Optional, Tuple, Union
 import torch
 import gc
+from pathlib import Path
 
-wd = "/home/xtof/sda5/bloom/"
-wd = "/mnt/dos/xtof/"
+# Put here the directory where you downloaded the Bloom's parameters
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloom/bloom/"
+
+# subdirectory that will contain the outputs at every layer (does not need to be emptied)
+tmpdir = "tmpdir/"
+Path(tmpdir).mkdir(parents=True, exist_ok=True)
+
+# Do not modify below
 
 allblocks = []
 filesuffix = ""
-
 pnames = (
         'input_layernorm.weight',
         'input_layernorm.bias',
@@ -107,34 +112,26 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         use_cache: bool = False,
         output_attentions: bool = False,
     ):
-        # to free the computation graph ???????
-        # hidden_states = hidden_states.detach()
-        # if not alibi==None: alibi = alibi.detach()
-        # if not attention_mask==None: attention_mask = attention_mask.detach()
-        
         print("calling forward layer",self.numLayer,self.hasParms, hidden_states.device)
         t0 = time.time()
-
         if self.hasParms:
             if self.loadInputs:
-                hidden_states = torch.load("layerout."+str(self.numLayer-1)+filesuffix)
-                # attention_mask = torch.load("layerout."+str(self.numLayer-1)+".1")
+                hidden_states = torch.load(tmpdir+"layerout."+str(self.numLayer-1)+filesuffix)
             y0 = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache=False, output_attentions=False)
             self.saveOutputs(y0)
             y = (y0[0], attention_mask)
         else:
+            # when the layer is empty, just pass the input unchanged
             y=(hidden_states, attention_mask)
         t1 = time.time()
-        print("called forward",self.numLayer,len(y),t1-t0,self.hasParms,self.loadInputs)
+        # print("called forward",self.numLayer,len(y),t1-t0,self.hasParms,self.loadInputs)
         return y
 
     def saveOutputs(self,y):
-        torch.save(y[0],"layerout."+str(self.numLayer)+filesuffix)
-        # I have no cue what's in this tuple ??
-        # torch.save(y[1],"layerout."+str(self.numLayer)+".1")
+        torch.save(y[0],tmpdir+"layerout."+str(self.numLayer)+filesuffix)
+        # what's next in this tuple ?
 
 def initModel():
-    print("loading empty model")
     t0 = time.time()
     model=None
     with init_empty_weights():
@@ -142,6 +139,7 @@ def initModel():
         transformers.models.bloom.modeling_bloom.BloomBlock = MyBloomBlock
         model = transformers.models.bloom.modeling_bloom.BloomForCausalLM(config)
 
+    # we keep the embeddings and final head always in memory: TODO: free them to reduce RAM requirements
     model.transformer.word_embeddings = MyEmbeddings()
     model.transformer.word_embeddings_layernorm.weight = torch.nn.Parameter(torch.zeros(model.transformer.word_embeddings_layernorm.weight.size()),requires_grad=False)
     model.transformer.word_embeddings_layernorm.bias = torch.nn.Parameter(torch.zeros(model.transformer.word_embeddings_layernorm.bias.size()),requires_grad=False)
@@ -155,7 +153,6 @@ def initModel():
     return model
 
 def loadEmbeddings(model):
-    # takes approx. 21MB
     parms = torch.load(wd+"pytorch_model_00001-of-00072.bin")
     vparms = parms['word_embeddings.weight'].to(dtype=torch.float32)
     model.transformer.word_embeddings = torch.nn.Embedding.from_pretrained(vparms,freeze=True)
@@ -180,23 +177,26 @@ def loadLMHead(model):
     gc.collect()
     print("LMhead loaded","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
+# ###################################
+
 toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
 model = initModel()
 loadEmbeddings(model)
 loadLMHead(model)
 
-
+# start by loading the first layer in RAM and process all sentences through the first layer
 allblocks[0].loadLayer(0)
 with open("sentences.txt","r") as f:
     for ui,l in enumerate(f.readlines()):
         filesuffix = "."+str(ui)
         prompt = toker(l)
         x = torch.LongTensor([prompt['input_ids']])
-        print("prompt",x)
         out = model(x) # save layer 0 output to disk
 allblocks[0].emptyLayer()
 
+# then do the same for second layer, and then 3rd...
 for i in range(1,69):
+    # reload the input to the i^th layer from disk
     allblocks[i].loadInputs = True
     allblocks[i].loadLayer(i)
     with open("sentences.txt","r") as f:
@@ -204,11 +204,11 @@ for i in range(1,69):
             filesuffix = "."+str(ui)
             prompt = toker(l)
             x = torch.LongTensor([prompt['input_ids']])
-            print("prompt",x)
             out = model(x) # save layer i output to disk
     allblocks[i].emptyLayer()
     allblocks[i].loadInputs = False
 
+# finally pass penultimate input into the last layer and get answers
 allblocks[69].loadInputs = True
 allblocks[69].loadLayer(69)
 with open("sentences.txt","r") as f:
@@ -216,13 +216,14 @@ with open("sentences.txt","r") as f:
         filesuffix = "."+str(ui)
         prompt = toker(l)
         x = torch.LongTensor([prompt['input_ids']])
-        print("prompt",x)
+        print("prompt",l)
         out = model(x)
-        print("model forward finished")
-        print("out",out.logits.shape, out.logits.device)
         logits = out.logits.view(-1)
         print("yes",logits[18260].item(),ui)
         print("no",logits[654].item(),ui)
+        # let's go slightly beyond yes/no questions...
+        besttok = torch.argmax(logits).item()
+        print("maxtoken",logits[besttok].item(),besttok,ui)
 allblocks[69].emptyLayer()
 allblocks[69].loadInputs = False
 
