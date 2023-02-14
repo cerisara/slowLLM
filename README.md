@@ -1,6 +1,6 @@
 ## What is this soft about?
 
-Using Large Language Models (starting with Bloom-176b) slowly, on commodity GPU-free desktops.
+Using Large Language Models (starting with Bloom-176b) slowly, but locally, on commodity GPU-free personal computer.
 
 ## Requirements
 
