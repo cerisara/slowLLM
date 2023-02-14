@@ -1,32 +1,33 @@
 ## What is this soft about?
 
-Using Large Language Models (starting with Bloom) slowly, on commodity GPU-free desktops.
+Using Large Language Models (starting with Bloom-176b) slowly, on commodity GPU-free desktops.
 
 ## Requirements
 
 - desktop or laptop with at least 25GB of RAM (could be reduced <16GB, PR welcome)
-- harddrive with 400GB free to store Bloom's parameters
+- harddrive with 400GB free to store Bloom's parameters (the fastest drive the better; NVMe SSD welcome)
 - that's it! no GPU is needed
-- optional: a fast hard drive (the best would be a NVMe ssd)
 
 ## How to use
 
-- download or clone this repo
-- install in conda/pip pytorch + transformers + accelerate
-- write in the text file code/questions.txt one yes/no question per line
+- download the Bloom-176b weights [from Huggingface Hub](https://huggingface.co/bigscience/bloom)
+- download or clone this github repo
+- install in a conda/pip environment: pytorch + transformers + accelerate
+- write in the text file code/sentences.txt one yes/no question per line
 - cd code; python slowLLM.py
 
-Example of usage:
+Example of yes/no questions it may answer:
 ```
-
+John: "We need so much fossil energy to make a plane fly". Mary: "Do the birds can fly?" Is this question a rhetorical question, yes or no?
+Mary: "you know when your machine learning experiments give very good results, and you fix a bug, and then nothing works any more?" Is Mary's question a rhetorical question, yes or no?  
 ```
 
 ## Limitations
 
-- It does not support real text generation, this would be far too slow with autoregressive models;
-may be in the future  with text diffusion models, but not now.
+- **This version does not support real text generation**, this would be far too slow with autoregressive models;
+may be in the future with text diffusion models, but not now.
 - So it is limited for now to only answer yes/no questions: many tasks can be framed as yes/no questions,
-but this may require some thinking.
+but this may require some creative thinking.
 - Answering 10 questions with Bloom takes about the same time as answering one question:
 this time ranges between 7' to 70', depending on the speed of your hard drive.
 So it's best to write all questions at once before calling the program.
