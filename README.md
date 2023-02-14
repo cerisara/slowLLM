@@ -12,7 +12,7 @@ Using Large Language Models (starting with Bloom-176b and Bloomz-176b) slowly, b
 
 - download the Bloom-176b weights [from Huggingface Hub](https://huggingface.co/bigscience/bloom). You may also reuse or adapt the script downloadBloomz.sh available in this repo in code/ for linux.
 - download or clone this github repo
-- install in a conda/pip environment: pytorch + transformers + accelerate
+- install in a conda/pip environment: pytorch + transformers + accelerate + datasets + promptsource
 - write in the text file code/sentences.txt one yes/no question per line
 - cd code; python slowLLM.py
 

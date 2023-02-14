@@ -43,7 +43,7 @@ class MyLinear(torch.nn.Linear):
     def forward(self, x):
         if self.isLoaded:
             return super().forward(x)
-        # I dont know exactly the lexicon size, but I only query yes/no anyway so...
+        # I dont know exactly the lexicon size, but I only query yes/no anyway so... TODO: fix that!
         return torch.zeros((1,250000))
 
 class MyEmbeddings(torch.nn.Embedding):
@@ -185,54 +185,128 @@ model = initModel()
 loadEmbeddings(model)
 loadLMHead(model)
 
-# start by loading the first layer in RAM and process all sentences through the first layer
-allblocks[0].loadLayer(0)
-with open("sentences.txt","r") as f:
-    for ui,l in enumerate(f.readlines()):
-        filesuffix = "."+str(ui)
-        prompt = toker(l)
-        x = torch.LongTensor([prompt['input_ids']])
-        out = model(x) # save layer 0 output to disk
-allblocks[0].emptyLayer()
-
-# then do the same for second layer, and then 3rd...
-for i in range(1,69):
-    # reload the input to the i^th layer from disk
-    allblocks[i].loadInputs = True
-    allblocks[i].loadLayer(i)
+def run_test_0():
+    # start by loading the first layer in RAM and process all sentences through the first layer
+    allblocks[0].loadLayer(0)
     with open("sentences.txt","r") as f:
         for ui,l in enumerate(f.readlines()):
             filesuffix = "."+str(ui)
             prompt = toker(l)
             x = torch.LongTensor([prompt['input_ids']])
-            out = model(x) # save layer i output to disk
-    allblocks[i].emptyLayer()
-    allblocks[i].loadInputs = False
+            out = model(x) # save layer 0 output to disk
+    allblocks[0].emptyLayer()
 
-# finally pass penultimate input into the last layer and get answers
-allblocks[69].loadInputs = True
-allblocks[69].loadLayer(69)
-with open("sentences.txt","r") as f:
-    for ui,l in enumerate(f.readlines()):
+    # then do the same for second layer, and then 3rd...
+    for i in range(1,69):
+        # reload the input to the i^th layer from disk
+        allblocks[i].loadInputs = True
+        allblocks[i].loadLayer(i)
+        with open("sentences.txt","r") as f:
+            for ui,l in enumerate(f.readlines()):
+                filesuffix = "."+str(ui)
+                prompt = toker(l)
+                x = torch.LongTensor([prompt['input_ids']])
+                out = model(x) # save layer i output to disk
+        allblocks[i].emptyLayer()
+        allblocks[i].loadInputs = False
+
+    # finally pass penultimate input into the last layer and get answers
+    allblocks[69].loadInputs = True
+    allblocks[69].loadLayer(69)
+    with open("sentences.txt","r") as f:
+        for ui,l in enumerate(f.readlines()):
+            filesuffix = "."+str(ui)
+            prompt = toker(l)
+            x = torch.LongTensor([prompt['input_ids']])
+            print("prompt",l)
+            out = model(x)
+            logits = out.logits.view(-1)
+            print("yes",logits[18260].item(),ui)
+            print("no",logits[654].item(),ui)
+            # let's go slightly beyond yes/no questions...
+            besttok = torch.argmax(logits).item()
+            print("maxtoken",logits[besttok].item(),besttok,ui)
+    allblocks[69].emptyLayer()
+    allblocks[69].loadInputs = False
+
+    # token of 'yes': 18260
+    # token of 'no' : 654
+
+    # output of a block is a tuple with:
+    # - hidden_states
+    # - optional: presents
+    # - optional: self-att
+
+def run_BoolQ():
+    from datasets import load_dataset
+    from promptsource.templates import DatasetTemplates
+
+    pro = DatasetTemplates('super_glue/boolq')
+    # just pick the first prompt for now TODO: sample randomly prompts
+    protemp = list(pro.templates.values())[0]
+
+    dataset = load_dataset('boolq',split="validation")
+    # start by loading the first layer in RAM and process all sentences through the first layer
+    allblocks[0].loadLayer(0)
+    for ui,ex in enumerate(dataset):
         filesuffix = "."+str(ui)
+        prompt = toker(protemp.apply(ex)[0])
+        x = torch.LongTensor([prompt['input_ids']])
+        out = model(x) # save layer 0 output to disk
+    allblocks[0].emptyLayer()
+
+    # then do the same for second layer, and then 3rd...
+    for i in range(1,69):
+        # reload the input to the i^th layer from disk
+        allblocks[i].loadInputs = True
+        allblocks[i].loadLayer(i)
+        for ui,ex in enumerate(dataset):
+            filesuffix = "."+str(ui)
+            prompt = toker(protemp.apply(ex)[0])
+            x = torch.LongTensor([prompt['input_ids']])
+            out = model(x) # save layer i output to disk
+        allblocks[i].emptyLayer()
+        allblocks[i].loadInputs = False
+
+    # finally pass penultimate input into the last layer and get answers
+    nok,ntot=0,0
+    allblocks[69].loadInputs = True
+    allblocks[69].loadLayer(69)
+    for ui,ex in enumerate(dataset):
+        filesuffix = "."+str(ui)
+        l = protemp.apply(ex)[0]
         prompt = toker(l)
         x = torch.LongTensor([prompt['input_ids']])
-        print("prompt",l)
         out = model(x)
         logits = out.logits.view(-1)
+
+        # reporting:
+        print("prompt",ui,l)
+        print("GOLD",ex['answer'],ui)
         print("yes",logits[18260].item(),ui)
         print("no",logits[654].item(),ui)
+        truesc, falsesc = logits[17867].item(), logits[32349].item()
+        print("True",truesc,ui)
+        print("False",falsesc,ui)
         # let's go slightly beyond yes/no questions...
         besttok = torch.argmax(logits).item()
         print("maxtoken",logits[besttok].item(),besttok,ui)
-allblocks[69].emptyLayer()
-allblocks[69].loadInputs = False
 
-# token of 'yes': 18260
-# token of 'no' : 654
+        truesc /= (truesc+falsesc)
+        falsesc /= (truesc+falsesc)
+        ntot+=1
+        if ex['answer'].startswith('True') and truesc>=0.5: nok+=1
+        elif ex['answer'].startswith('False') and falsesc>0.5: nok+=1
+        acc = float(nok)/float(ntot)
+        print("ACC",acc,nok,ntot)
+    allblocks[69].emptyLayer()
+    allblocks[69].loadInputs = False
 
-# output of a block is a tuple with:
-# - hidden_states
-# - optional: presents
-# - optional: self-att
+    # token of 'yes': 18260
+    # token of 'no' : 654
+    # token of 'True':  17867
+    # token of 'False': 32349
+
+
+run_BoolQ()
 
