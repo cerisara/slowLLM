@@ -1,6 +1,6 @@
 ## What is this soft about?
 
-Using Large Language Models (starting with Bloom-176b) slowly, but locally, on commodity GPU-free personal computer.
+Using Large Language Models (starting with Bloom-176b and Bloomz-176b) slowly, but locally, on commodity GPU-free personal computer.
 
 ## Requirements
 
@@ -10,7 +10,7 @@ Using Large Language Models (starting with Bloom-176b) slowly, but locally, on c
 
 ## How to use
 
-- download the Bloom-176b weights [from Huggingface Hub](https://huggingface.co/bigscience/bloom)
+- download the Bloom-176b weights [from Huggingface Hub](https://huggingface.co/bigscience/bloom). You may also reuse or adapt the script downloadBloomz.sh available in this repo in code/ for linux.
 - download or clone this github repo
 - install in a conda/pip environment: pytorch + transformers + accelerate
 - write in the text file code/sentences.txt one yes/no question per line

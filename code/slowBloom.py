@@ -10,6 +10,7 @@ from pathlib import Path
 
 # Put here the directory where you downloaded the Bloom's parameters
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloom/bloom/"
+wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
 
 # subdirectory that will contain the outputs at every layer (does not need to be emptied)
 tmpdir = "tmpdir/"

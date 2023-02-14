@@ -12,3 +12,5 @@ John: "Just as usual, Marc did not call at christmas" Mary: "Did you think he wo
 John: "Just as usual, Marc did not call at christmas" Mary: "Do you think we should call him?" Is Mary's question a rhetorical question, yes or no?
 Mary: "you know when your machine learning experiments give very good results, and you fix a bug, and then nothing works any more?" Is Mary's question a rhetorical question, yes or no?  
 Mary: "you know when your machine learning experiments give very good results, and you fix a bug, and then nothing works any more, may it be because you introduce a new bug?" Is Mary's question a rhetorical question, yes or no?  
+"Il faut manger beaucoup pour ne plus avoir faim" Is the previous sentence in French, yes or no?
+"You must eat a lot to be satiated" Is the previous sentence in French, yes or no?
