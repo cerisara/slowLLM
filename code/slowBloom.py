@@ -186,6 +186,7 @@ loadEmbeddings(model)
 loadLMHead(model)
 
 def run_test_0():
+    global filesuffix
     # start by loading the first layer in RAM and process all sentences through the first layer
     allblocks[0].loadLayer(0)
     with open("sentences.txt","r") as f:
@@ -241,6 +242,7 @@ def run_BoolQ():
     from datasets import load_dataset
     from promptsource.templates import DatasetTemplates
 
+    global filesuffix
     pro = DatasetTemplates('super_glue/boolq')
     # just pick the first prompt for now TODO: sample randomly prompts
     protemp = list(pro.templates.values())[0]
