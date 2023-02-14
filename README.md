@@ -15,6 +15,7 @@ Using Large Language Models (starting with Bloom-176b and Bloomz-176b) slowly, b
 - install in a conda/pip environment: pytorch + transformers + accelerate + datasets + promptsource
 - write in the text file code/sentences.txt one yes/no question per line
 - cd code; python slowLLM.py
+    - by default, this code now evaluates Bloomz on the BoolQ dataset; but there's another simpler function 'run_test_0()' that you can adapt to run bloomz on your own examples
 
 Example of yes/no questions it may answer:
 ```
