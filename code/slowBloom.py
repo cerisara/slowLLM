@@ -247,7 +247,7 @@ def run_BoolQ():
     # just pick the first prompt for now TODO: sample randomly prompts
     protemp = list(pro.templates.values())[0]
 
-    dataset = load_dataset('boolq',split="validation")
+    dataset = load_dataset('boolq',split="validation[0:50]")
     # start by loading the first layer in RAM and process all sentences through the first layer
     allblocks[0].loadLayer(0)
     for ui,ex in enumerate(dataset):
@@ -294,11 +294,12 @@ def run_BoolQ():
         besttok = torch.argmax(logits).item()
         print("maxtoken",logits[besttok].item(),besttok,ui)
 
-        truesc /= (truesc+falsesc)
-        falsesc /= (truesc+falsesc)
+        denom = (truesc+falsesc)
+        truesc /= denom
+        falsesc /= denom
         ntot+=1
-        if ex['answer'].startswith('True') and truesc>=0.5: nok+=1
-        elif ex['answer'].startswith('False') and falsesc>0.5: nok+=1
+        if ex['answer'] and truesc>=0.5: nok+=1
+        elif (not ex['answer']) and falsesc>0.5: nok+=1
         acc = float(nok)/float(ntot)
         print("ACC",acc,nok,ntot)
     allblocks[69].emptyLayer()
