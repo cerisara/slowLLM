@@ -247,7 +247,7 @@ def run_BoolQ():
     # just pick the first prompt for now TODO: sample randomly prompts
     protemp = list(pro.templates.values())[0]
 
-    dataset = load_dataset('boolq',split="validation[0:50]")
+    dataset = load_dataset('boolq',split="validation[150:250]")
     # start by loading the first layer in RAM and process all sentences through the first layer
     allblocks[0].loadLayer(0)
     for ui,ex in enumerate(dataset):
