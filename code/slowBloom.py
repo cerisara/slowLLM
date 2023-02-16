@@ -113,7 +113,9 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         use_cache: bool = False,
         output_attentions: bool = False,
     ):
-        print("calling forward layer",self.numLayer,self.hasParms, hidden_states.device)
+        # print("calling forward layer",self.numLayer,self.hasParms, hidden_states.device)
+        print("layer input",torch.norm(hidden_states).item())
+
         t0 = time.time()
         if self.hasParms:
             if self.loadInputs:
@@ -164,9 +166,10 @@ def loadEmbeddings(model):
     model.transformer.word_embeddings_layernorm.bias = torch.nn.Parameter(vparms,requires_grad=False)
     model.lm_head.weight = model.transformer.word_embeddings.weight
     model.lm_head.isLoaded = True
+    print("embeddings loaded","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     del parms
     gc.collect()
-    print("embeddings created","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    print("embeddings loaded","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
 def loadLMHead(model):
     parms = torch.load(wd+"pytorch_model_00072-of-00072.bin")
@@ -184,6 +187,24 @@ toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.fro
 model = initModel()
 loadEmbeddings(model)
 loadLMHead(model)
+
+def test_layer0():
+    with open("sentences.txt","r") as f: lines = f.readlines()
+    utt = lines[0]
+    prompt = toker(utt)
+    x = torch.LongTensor([prompt['input_ids']])
+
+    allblocks[0].loadLayer(0)
+    out = model(x)
+    logits = out.logits.view(-1)
+    print("yes",logits[18260].item())
+    allblocks[0].emptyLayer()
+
+    allblocks[0].loadLayer(0)
+    out = model(x)
+    logits = out.logits.view(-1)
+    print("yes",logits[18260].item())
+    allblocks[0].emptyLayer()
 
 def run_test_0():
     global filesuffix
@@ -310,6 +331,6 @@ def run_BoolQ():
     # token of 'True':  17867
     # token of 'False': 32349
 
-
-run_BoolQ()
+test_layer0()
+# run_BoolQ()
 
