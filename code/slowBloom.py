@@ -37,7 +37,7 @@ pnames = (
 
 class MyLinear(torch.nn.Linear):
     def __init__(self, *args):
-        super().__init__(1,1)
+        super().__init__(1,1,bias=False)
         self.isLoaded = False
 
     def forward(self, x):
