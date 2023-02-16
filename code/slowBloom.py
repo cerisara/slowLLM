@@ -47,14 +47,21 @@ class MyLinear(torch.nn.Linear):
         return torch.zeros((1,250000))
 
 class MyEmbeddings(torch.nn.Embedding):
-    def __init__(self, *args):
+    def __init__(self, poids):
         super().__init__(1,1)
-        self.dummy = torch.zeros((1,14336))
-        self.isLoaded = False
+        if poids==None:
+            self.dummy = torch.zeros((1,14336))
+            self.isLoaded = False
+        else:
+            self.isLoaded = True
+            self.weight = torch.nn.Parameter(poids.to(dtype=torch.float16),requires_grad=False)
 
     def forward(self, x):
         if self.isLoaded:
-            return super().forward(x)
+            e=super().forward(x)
+            print("EMBED",type(e))
+            e=e.to(dtype=torch.float32)
+            return e
         else: return self.dummy.expand((x.size(0),14336))
 
 class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
@@ -143,8 +150,7 @@ def initModel():
         transformers.models.bloom.modeling_bloom.BloomBlock = MyBloomBlock
         model = transformers.models.bloom.modeling_bloom.BloomForCausalLM(config)
 
-    # we keep the embeddings and final head always in memory: TODO: free them to reduce RAM requirements
-    model.transformer.word_embeddings = MyEmbeddings()
+    torch.nn.Embedding = MyEmbeddings(None)
     model.transformer.word_embeddings_layernorm.weight = torch.nn.Parameter(torch.zeros(model.transformer.word_embeddings_layernorm.weight.size()),requires_grad=False)
     model.transformer.word_embeddings_layernorm.bias = torch.nn.Parameter(torch.zeros(model.transformer.word_embeddings_layernorm.bias.size()),requires_grad=False)
     model.transformer.ln_f.weight = torch.nn.Parameter(torch.zeros(model.transformer.ln_f.weight.size()),requires_grad=False)
@@ -158,8 +164,8 @@ def initModel():
 
 def loadEmbeddings(model):
     parms = torch.load(wd+"pytorch_model_00001-of-00072.bin")
-    vparms = parms['word_embeddings.weight'].to(dtype=torch.float32)
-    model.transformer.word_embeddings = torch.nn.Embedding.from_pretrained(vparms,freeze=True)
+    vparms = parms['word_embeddings.weight']
+    model.transformer.word_embeddings = MyEmbeddings(vparms)
     model.transformer.word_embeddings.isLoaded = True
     vparms = parms['word_embeddings_layernorm.weight'].to(dtype=torch.float32)
     model.transformer.word_embeddings_layernorm.weight = torch.nn.Parameter(vparms,requires_grad=False)
@@ -167,7 +173,6 @@ def loadEmbeddings(model):
     model.transformer.word_embeddings_layernorm.bias = torch.nn.Parameter(vparms,requires_grad=False)
     model.lm_head.weight = model.transformer.word_embeddings.weight
     model.lm_head.isLoaded = True
-    print("embeddings loaded","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     del parms
     gc.collect()
     print("embeddings loaded","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
