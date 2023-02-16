@@ -2,6 +2,11 @@
 
 Using Large Language Models (starting with Bloom-176b and Bloomz-176b) slowly, but locally, on commodity GPU-free personal computer.
 
+The principle is very simple: load the layers in RAM one by one, and process all the data through one layer,
+the pass to the next layer, and so on until the top layer and next word prediction.
+A similar behaviour may be obtained with offloading and the accelerate library, but this code 
+is more specialized as it has been designed from the ground up for this specific use case.
+
 ## Requirements
 
 - desktop or laptop with at least 25GB of RAM (could be reduced <16GB, PR welcome)
@@ -42,4 +47,10 @@ So it's best to write all questions at once before calling the program.
 You can gain a lot of speed by putting the model's parameters onto an NVMe SSD disk.
 Also, remember to put as much questions as possible in the input file so that they all pass into the first
 layer before the second layer weights are loaded.
+
+## FAQ, TODO and bugs to fix
+
+- The current approach to save every layer output to disk does not scale beyond 50 examples; a better usage of
+the RAM should be realized to process more examples.
+- Although it'd be extremely slow, nothing prevent this approach to perform generation; this option shall be at least enabled.
 
