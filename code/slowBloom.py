@@ -89,18 +89,18 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         gc.collect()
         self.hasParms = False
 
-    def loadLayer(self,l):
+    def loadLayer(self):
         print("load weights from disk")
         t0 = time.time()
-        f = "0000"+str(l+2) if l<8 else "000"+str(l+2)
+        f = "0000"+str(self.numLayer+2) if self.numLayer<8 else "000"+str(self.numLayer+2)
         parms = torch.load(wd+"pytorch_model_"+f+"-of-00072.bin")
         for i in range(len(pnames)):
-            prebloc = parms['h.'+str(l)+'.'+pnames[i]].to(dtype=torch.float32)
-            del parms['h.'+str(l)+'.'+pnames[i]]
+            prebloc = parms['h.'+str(self.numLayer)+'.'+pnames[i]].to(dtype=torch.float32)
+            del parms['h.'+str(self.numLayer)+'.'+pnames[i]]
             prebloc = torch.nn.Parameter(prebloc,requires_grad=False)
             self.assignParms(pnames[i],prebloc)
         t1 = time.time()
-        print("preloaded OK",l,t1-t0,"RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        print("preloaded OK",self.numLayer,t1-t0,"RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
         self.hasParms = True
 
     def forward(
@@ -120,6 +120,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         if self.hasParms:
             if self.loadInputs:
                 hidden_states = torch.load(tmpdir+"layerout."+str(self.numLayer-1)+filesuffix)
+                print("loading input",self.numLayer-1,torch.norm(hidden_states).item())
             y0 = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache=False, output_attentions=False)
             self.saveOutputs(y0)
             y = (y0[0], attention_mask)
@@ -194,26 +195,34 @@ def test_end():
     prompt = toker(utt)
     x = torch.LongTensor([prompt['input_ids']])
 
-    allblocks[0].loadLayer(0)
+    allblocks[0].loadLayer()
     out = model(x)
     logits = out.logits.view(-1)
     print("yes",logits[18260].item())
     allblocks[0].emptyLayer()
 
-    i=1
-    allblocks[i].loadInputs = True
-    allblocks[i].loadLayer(i)
+    for i in range(1,len(allblocks)-1):
+        allblocks[i].loadInputs = True
+        allblocks[i].loadLayer()
+        out = model(x)
+        logits = out.logits.view(-1)
+        print("yes",logits[18260].item())
+        allblocks[i].emptyLayer()
+        allblocks[i].loadInputs = False
+
+    allblocks[-1].loadInputs = True
+    allblocks[-1].loadLayer()
     out = model(x)
     logits = out.logits.view(-1)
     print("yes",logits[18260].item())
-    allblocks[i].emptyLayer()
-    allblocks[i].loadInputs = False
+    allblocks[-1].emptyLayer()
+    allblocks[-1].loadInputs = False
 
 
 def run_test_0():
     global filesuffix
     # start by loading the first layer in RAM and process all sentences through the first layer
-    allblocks[0].loadLayer(0)
+    allblocks[0].loadLayer()
     with open("sentences.txt","r") as f:
         for ui,l in enumerate(f.readlines()):
             filesuffix = "."+str(ui)
@@ -223,10 +232,10 @@ def run_test_0():
     allblocks[0].emptyLayer()
 
     # then do the same for second layer, and then 3rd...
-    for i in range(1,model.numLayer-1):
+    for i in range(1,len(allblocks)-1):
         # reload the input to the i^th layer from disk
         allblocks[i].loadInputs = True
-        allblocks[i].loadLayer(i)
+        allblocks[i].loadLayer()
         with open("sentences.txt","r") as f:
             for ui,l in enumerate(f.readlines()):
                 filesuffix = "."+str(ui)
@@ -237,8 +246,8 @@ def run_test_0():
         allblocks[i].loadInputs = False
 
     # finally pass penultimate input into the last layer and get answers
-    allblocks[model.numLayer-1].loadInputs = True
-    allblocks[model.numLayer-1].loadLayer(model.numLayer-1)
+    allblocks[-1].loadInputs = True
+    allblocks[-1].loadLayer()
     with open("sentences.txt","r") as f:
         for ui,l in enumerate(f.readlines()):
             filesuffix = "."+str(ui)
@@ -252,8 +261,8 @@ def run_test_0():
             # let's go slightly beyond yes/no questions...
             besttok = torch.argmax(logits).item()
             print("maxtoken",logits[besttok].item(),besttok,ui)
-    allblocks[model.numLayer-1].emptyLayer()
-    allblocks[model.numLayer-1].loadInputs = False
+    allblocks[-1].emptyLayer()
+    allblocks[-1].loadInputs = False
 
     # token of 'yes': 18260
     # token of 'no' : 654
@@ -274,7 +283,7 @@ def run_BoolQ():
 
     dataset = load_dataset('boolq',split="validation[150:250]")
     # start by loading the first layer in RAM and process all sentences through the first layer
-    allblocks[0].loadLayer(0)
+    allblocks[0].loadLayer()
     for ui,ex in enumerate(dataset):
         filesuffix = "."+str(ui)
         prompt = toker(protemp.apply(ex)[0])
@@ -283,10 +292,10 @@ def run_BoolQ():
     allblocks[0].emptyLayer()
 
     # then do the same for second layer, and then 3rd...
-    for i in range(1,model.numLayer-1):
+    for i in range(1,len(allblocks)-1):
         # reload the input to the i^th layer from disk
         allblocks[i].loadInputs = True
-        allblocks[i].loadLayer(i)
+        allblocks[i].loadLayer()
         for ui,ex in enumerate(dataset):
             filesuffix = "."+str(ui)
             prompt = toker(protemp.apply(ex)[0])
@@ -297,8 +306,8 @@ def run_BoolQ():
 
     # finally pass penultimate input into the last layer and get answers
     nok,ntot=0,0
-    allblocks[model.numLayer-1].loadInputs = True
-    allblocks[model.numLayer-1].loadLayer(model.numLayer-1)
+    allblocks[-1].loadInputs = True
+    allblocks[-1].loadLayer()
     for ui,ex in enumerate(dataset):
         filesuffix = "."+str(ui)
         l = protemp.apply(ex)[0]
@@ -327,8 +336,8 @@ def run_BoolQ():
         elif (not ex['answer']) and falsesc>0.5: nok+=1
         acc = float(nok)/float(ntot)
         print("ACC",acc,nok,ntot)
-    allblocks[model.numLayer-1].emptyLayer()
-    allblocks[model.numLayer-1].loadInputs = False
+    allblocks[-1].emptyLayer()
+    allblocks[-1].loadInputs = False
 
     # token of 'yes': 18260
     # token of 'no' : 654
