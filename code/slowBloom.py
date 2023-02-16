@@ -188,7 +188,7 @@ model = initModel()
 loadEmbeddings(model)
 loadLMHead(model)
 
-def test_layer0():
+def test_end():
     with open("sentences.txt","r") as f: lines = f.readlines()
     utt = lines[0]
     prompt = toker(utt)
@@ -200,11 +200,15 @@ def test_layer0():
     print("yes",logits[18260].item())
     allblocks[0].emptyLayer()
 
-    allblocks[0].loadLayer(0)
+    i=1
+    allblocks[i].loadInputs = True
+    allblocks[i].loadLayer(i)
     out = model(x)
     logits = out.logits.view(-1)
     print("yes",logits[18260].item())
-    allblocks[0].emptyLayer()
+    allblocks[i].emptyLayer()
+    allblocks[i].loadInputs = False
+
 
 def run_test_0():
     global filesuffix
@@ -219,7 +223,7 @@ def run_test_0():
     allblocks[0].emptyLayer()
 
     # then do the same for second layer, and then 3rd...
-    for i in range(1,69):
+    for i in range(1,model.numLayer-1):
         # reload the input to the i^th layer from disk
         allblocks[i].loadInputs = True
         allblocks[i].loadLayer(i)
@@ -233,8 +237,8 @@ def run_test_0():
         allblocks[i].loadInputs = False
 
     # finally pass penultimate input into the last layer and get answers
-    allblocks[69].loadInputs = True
-    allblocks[69].loadLayer(69)
+    allblocks[model.numLayer-1].loadInputs = True
+    allblocks[model.numLayer-1].loadLayer(model.numLayer-1)
     with open("sentences.txt","r") as f:
         for ui,l in enumerate(f.readlines()):
             filesuffix = "."+str(ui)
@@ -248,8 +252,8 @@ def run_test_0():
             # let's go slightly beyond yes/no questions...
             besttok = torch.argmax(logits).item()
             print("maxtoken",logits[besttok].item(),besttok,ui)
-    allblocks[69].emptyLayer()
-    allblocks[69].loadInputs = False
+    allblocks[model.numLayer-1].emptyLayer()
+    allblocks[model.numLayer-1].loadInputs = False
 
     # token of 'yes': 18260
     # token of 'no' : 654
@@ -279,7 +283,7 @@ def run_BoolQ():
     allblocks[0].emptyLayer()
 
     # then do the same for second layer, and then 3rd...
-    for i in range(1,69):
+    for i in range(1,model.numLayer-1):
         # reload the input to the i^th layer from disk
         allblocks[i].loadInputs = True
         allblocks[i].loadLayer(i)
@@ -293,8 +297,8 @@ def run_BoolQ():
 
     # finally pass penultimate input into the last layer and get answers
     nok,ntot=0,0
-    allblocks[69].loadInputs = True
-    allblocks[69].loadLayer(69)
+    allblocks[model.numLayer-1].loadInputs = True
+    allblocks[model.numLayer-1].loadLayer(model.numLayer-1)
     for ui,ex in enumerate(dataset):
         filesuffix = "."+str(ui)
         l = protemp.apply(ex)[0]
@@ -323,14 +327,14 @@ def run_BoolQ():
         elif (not ex['answer']) and falsesc>0.5: nok+=1
         acc = float(nok)/float(ntot)
         print("ACC",acc,nok,ntot)
-    allblocks[69].emptyLayer()
-    allblocks[69].loadInputs = False
+    allblocks[model.numLayer-1].emptyLayer()
+    allblocks[model.numLayer-1].loadInputs = False
 
     # token of 'yes': 18260
     # token of 'no' : 654
     # token of 'True':  17867
     # token of 'False': 32349
 
-test_layer0()
+test_end()
 # run_BoolQ()
 
