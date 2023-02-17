@@ -11,6 +11,8 @@ from pathlib import Path
 # Put here the directory where you downloaded the Bloom's parameters
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloom/bloom/"
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
+wd = "/media/xtof/556E99561C655FA8/bloomz/"
+wd = "/mnt/dos/xtof/"
 
 # subdirectory that will contain the outputs at every layer (does not need to be emptied)
 tmpdir = "tmpdir/"
@@ -35,16 +37,44 @@ pnames = (
         'mlp.dense_4h_to_h.bias',
         )
 
-class MyLinear(torch.nn.Linear):
-    def __init__(self, *args):
-        super().__init__(1,1,bias=False)
+class MyLinear(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
         self.isLoaded = False
 
     def forward(self, x):
         if self.isLoaded:
-            return super().forward(x)
+            xx = x.squeeze().to(dtype=torch.bfloat16)
+            # matmul in bf16 takes 12s for 3 tokens :-(
+            y = torch.matmul(xx,self.weight.T)
+            return y.to(torch.float32)
         # I dont know exactly the lexicon size, but I only query yes/no anyway so... TODO: fix that!
         return torch.zeros((1,250000))
+ 
+    def emptyLayer(self):
+        if hasattr(self,'weight'): del self.weight
+        gc.collect()
+        self.isLoaded=False
+
+class LatentOutputs():
+    # rather than saving all latent outputs to disk, which is slow, it's best to keep it in RAM
+    # we need to keep only Nutts*Ntoks*14336 float32
+    # we know that embeddings in bf16 take about 8GB, and one layer in f32 takes about 10GB
+    # assuming Ntoks = 1000, then each latent output per utterance takes about 50MB
+    # so in 6GB, we can store 120 latent outputs, so let's take 100 examples
+
+    def __init__(self):
+        self.latent = []
+        self.dostore = True
+
+    def store(self,z):
+        # this is called once per utterance
+        if self.dostore: self.latent.append(z)
+
+    def get(self):
+        # in the second phase, we pop out all latent FIFO-style
+        if len(self.latent)<=0: return None
+        return self.latent.pop(0)
 
 class MyEmbeddings(torch.nn.Embedding):
     def __init__(self, poids):
@@ -54,15 +84,27 @@ class MyEmbeddings(torch.nn.Embedding):
             self.isLoaded = False
         else:
             self.isLoaded = True
-            self.weight = torch.nn.Parameter(poids.to(dtype=torch.float16),requires_grad=False)
+            self.weight = torch.nn.Parameter(poids.to(dtype=torch.bfloat16),requires_grad=False)
+        self.latentOutputs = None
 
     def forward(self, x):
         if self.isLoaded:
             e=super().forward(x)
-            print("EMBED",type(e))
+            self.latentOutputs.store(e.detach())
+            e=e.to(dtype=torch.float32)
+            return e
+        elif self.latentOutputs != None:
+            # in the second phase, we poll previously computed outputs to pass them to the first layer
+            e=self.latentOutputs.get()
+            if e==None: return self.dummy.expand((x.size(0),14336))
             e=e.to(dtype=torch.float32)
             return e
         else: return self.dummy.expand((x.size(0),14336))
+
+    def emptyLayer(self):
+        del self.weight
+        gc.collect()
+        self.isLoaded=False
 
 class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
     def __init__(self, config):
@@ -75,7 +117,11 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         allblocks.append(self)
         self.emptyParms = [p for p in self.parameters()]
         self.hasParms = False
-        self.loadInputs = False
+        self.latentOutputs = None
+
+    def saveOutputs(self,b):
+        if b: self.latentOutputs = LatentOutputs()
+        else: self.latentOutputs.dostore=False
 
     def assignParms(self,pname,v):
         if pname==pnames[0]: self.input_layernorm.weight = v
@@ -121,26 +167,22 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         output_attentions: bool = False,
     ):
         # print("calling forward layer",self.numLayer,self.hasParms, hidden_states.device)
-        print("layer input",torch.norm(hidden_states).item())
+        # print("layer input",torch.norm(hidden_states).item())
 
         t0 = time.time()
         if self.hasParms:
-            if self.loadInputs:
-                hidden_states = torch.load(tmpdir+"layerout."+str(self.numLayer-1)+filesuffix)
-                print("loading input",self.numLayer-1,torch.norm(hidden_states).item())
             y0 = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache=False, output_attentions=False)
-            self.saveOutputs(y0)
+            if self.latentOutputs!=None: self.latentOutputs.store(y0[0])
             y = (y0[0], attention_mask)
+        elif self.latentOutputs!=None:
+            h = self.latentOutputs.get()
+            if h==None: y=(hidden_states, attention_mask)
+            else: y = (h, attention_mask)
         else:
             # when the layer is empty, just pass the input unchanged
             y=(hidden_states, attention_mask)
         t1 = time.time()
-        # print("called forward",self.numLayer,len(y),t1-t0,self.hasParms,self.loadInputs)
         return y
-
-    def saveOutputs(self,y):
-        torch.save(y[0],tmpdir+"layerout."+str(self.numLayer)+filesuffix)
-        # what's next in this tuple ?
 
 def initModel():
     t0 = time.time()
@@ -167,17 +209,20 @@ def loadEmbeddings(model):
     vparms = parms['word_embeddings.weight']
     model.transformer.word_embeddings = MyEmbeddings(vparms)
     model.transformer.word_embeddings.isLoaded = True
+    model.transformer.word_embeddings.latentOutputs = LatentOutputs()
     vparms = parms['word_embeddings_layernorm.weight'].to(dtype=torch.float32)
     model.transformer.word_embeddings_layernorm.weight = torch.nn.Parameter(vparms,requires_grad=False)
     vparms = parms['word_embeddings_layernorm.bias'].to(dtype=torch.float32)
     model.transformer.word_embeddings_layernorm.bias = torch.nn.Parameter(vparms,requires_grad=False)
-    model.lm_head.weight = model.transformer.word_embeddings.weight
-    model.lm_head.isLoaded = True
     del parms
     gc.collect()
     print("embeddings loaded","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
 def loadLMHead(model):
+    loadEmbeddings(model)
+    model.lm_head.weight = model.transformer.word_embeddings.weight
+    model.lm_head.isLoaded = True
+    # ln_f est tout petit
     parms = torch.load(wd+"pytorch_model_00072-of-00072.bin")
     vparms = parms['ln_f.weight'].to(dtype=torch.float32)
     model.transformer.ln_f.weight = torch.nn.Parameter(vparms,requires_grad=False)
@@ -189,94 +234,48 @@ def loadLMHead(model):
 
 # ###################################
 
-toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
 model = initModel()
-loadEmbeddings(model)
-loadLMHead(model)
+toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
 
-def test_end():
-    with open("sentences.txt","r") as f: lines = f.readlines()
-    utt = lines[0]
-    prompt = toker(utt)
-    x = torch.LongTensor([prompt['input_ids']])
-
-    allblocks[0].loadLayer()
-    out = model(x)
-    logits = out.logits.view(-1)
-    print("yes",logits[18260].item())
-    allblocks[0].emptyLayer()
-
-    for i in range(1,len(allblocks)-1):
-        allblocks[i].loadInputs = True
-        allblocks[i].loadLayer()
-        out = model(x)
-        logits = out.logits.view(-1)
-        print("yes",logits[18260].item())
-        allblocks[i].emptyLayer()
-        allblocks[i].loadInputs = False
-
-    allblocks[-1].loadInputs = True
-    allblocks[-1].loadLayer()
-    out = model(x)
-    logits = out.logits.view(-1)
-    print("yes",logits[18260].item())
-    allblocks[-1].emptyLayer()
-    allblocks[-1].loadInputs = False
-
-
-def run_test_0():
-    global filesuffix
-    # start by loading the first layer in RAM and process all sentences through the first layer
-    allblocks[0].loadLayer()
+def run_free_utts():
+    loadEmbeddings(model)
     with open("sentences.txt","r") as f:
-        for ui,l in enumerate(f.readlines()):
-            filesuffix = "."+str(ui)
+        for l in f.readlines():
             prompt = toker(l)
             x = torch.LongTensor([prompt['input_ids']])
-            out = model(x) # save layer 0 output to disk
-    allblocks[0].emptyLayer()
+            out = model(x)
+    model.transformer.word_embeddings.emptyLayer()
+    model.lm_head.emptyLayer()
 
-    # then do the same for second layer, and then 3rd...
-    for i in range(1,len(allblocks)-1):
-        # reload the input to the i^th layer from disk
-        allblocks[i].loadInputs = True
-        allblocks[i].loadLayer()
+    for l in range(len(allblocks)):
+        allblocks[l].loadLayer()
+        allblocks[l].saveOutputs(True)
         with open("sentences.txt","r") as f:
-            for ui,l in enumerate(f.readlines()):
-                filesuffix = "."+str(ui)
-                prompt = toker(l)
+            for s in f.readlines():
+                prompt = toker(s)
                 x = torch.LongTensor([prompt['input_ids']])
-                out = model(x) # save layer i output to disk
-        allblocks[i].emptyLayer()
-        allblocks[i].loadInputs = False
+                out = model(x)
+        allblocks[l].emptyLayer()
+        allblocks[l].saveOutputs(False)
 
-    # finally pass penultimate input into the last layer and get answers
-    allblocks[-1].loadInputs = True
-    allblocks[-1].loadLayer()
+    loadLMHead(model)
     with open("sentences.txt","r") as f:
-        for ui,l in enumerate(f.readlines()):
-            filesuffix = "."+str(ui)
-            prompt = toker(l)
+        for ui,s in enumerate(f.readlines()):
+            prompt = toker(s)
             x = torch.LongTensor([prompt['input_ids']])
-            print("prompt",l)
             out = model(x)
             logits = out.logits.view(-1)
+            print("prompt",ui,s)
             print("yes",logits[18260].item(),ui)
             print("no",logits[654].item(),ui)
             # let's go slightly beyond yes/no questions...
             besttok = torch.argmax(logits).item()
             print("maxtoken",logits[besttok].item(),besttok,ui)
-    allblocks[-1].emptyLayer()
-    allblocks[-1].loadInputs = False
 
     # token of 'yes': 18260
     # token of 'no' : 654
 
-    # output of a block is a tuple with:
-    # - hidden_states
-    # - optional: presents
-    # - optional: self-att
-
+"""
 def run_BoolQ():
     from datasets import load_dataset
     from promptsource.templates import DatasetTemplates
@@ -348,7 +347,8 @@ def run_BoolQ():
     # token of 'no' : 654
     # token of 'True':  17867
     # token of 'False': 32349
+"""
 
-test_end()
+run_free_utts()
 # run_BoolQ()
 
