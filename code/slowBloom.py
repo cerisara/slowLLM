@@ -10,13 +10,9 @@ from pathlib import Path
 
 # Put here the directory where you downloaded the Bloom's parameters
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloom/bloom/"
-wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
 wd = "/media/xtof/556E99561C655FA8/bloomz/"
 wd = "/mnt/dos/xtof/"
-
-# subdirectory that will contain the outputs at every layer (does not need to be emptied)
-tmpdir = "tmpdir/"
-Path(tmpdir).mkdir(parents=True, exist_ok=True)
+wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
 
 # Do not modify below
 
@@ -79,8 +75,8 @@ class LatentOutputs():
 class MyEmbeddings(torch.nn.Embedding):
     def __init__(self, poids):
         super().__init__(1,1)
+        self.dummy = torch.zeros((1,14336))
         if poids==None:
-            self.dummy = torch.zeros((1,14336))
             self.isLoaded = False
         else:
             self.isLoaded = True
