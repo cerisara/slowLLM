@@ -233,6 +233,18 @@ def loadLMHead(model):
 model = initModel()
 toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
 
+if True:
+    # debug
+    loadLMHead(model)
+    s = 'La phrase "Je te hais" a un sentiment négatif'
+    prompt = toker(s)
+    x = torch.LongTensor([prompt['input_ids']])
+    labels = x.clone()
+    labels = torch.cat([labels[:,:1],labels], axis=1)
+    out = model(x,labels=labels)
+    print("LOSS",out.loss.view(-1))
+    exit()
+
 def run_free_utts():
     loadEmbeddings(model)
     with open("sentences.txt","r") as f:
@@ -259,17 +271,10 @@ def run_free_utts():
         for ui,s in enumerate(f.readlines()):
             prompt = toker(s)
             x = torch.LongTensor([prompt['input_ids']])
+            labels = x.clone()
+            labels = torch.cat([labels[:,:1],labels], axis=1)
             out = model(x)
-            logits = out.logits.view(-1)
-            print("prompt",ui,s)
-            print("yes",logits[18260].item(),ui)
-            print("no",logits[654].item(),ui)
-            # let's go slightly beyond yes/no questions...
-            besttok = torch.argmax(logits).item()
-            print("maxtoken",logits[besttok].item(),besttok,ui)
-
-    # token of 'yes': 18260
-    # token of 'no' : 654
+            print("LOSS",out.loss.view(-1))
 
 """
 def run_BoolQ():
