@@ -13,6 +13,7 @@ wd = "/home/xtof/nas1/TALC/Synalp/Models/bloom/bloom/"
 wd = "/media/xtof/556E99561C655FA8/bloomz/"
 wd = "/mnt/dos/xtof/"
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
+wd = "/home/xtof/models/bloomz/"
 
 # Do not modify below
 
@@ -40,9 +41,12 @@ class MyLinear(torch.nn.Module):
 
     def forward(self, x):
         if self.isLoaded:
+            print("enter linear")
             xx = x.squeeze().to(dtype=torch.bfloat16)
             # matmul in bf16 takes 12s for 3 tokens :-(
             y = torch.matmul(xx,self.weight.T)
+            y = y.unsqueeze(0)
+            print("in linear",y.shape)
             return y.to(torch.float32)
         # I dont know exactly the lexicon size, but I only query yes/no anyway so... TODO: fix that!
         return torch.zeros((1,250000))
@@ -233,18 +237,6 @@ def loadLMHead(model):
 model = initModel()
 toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
 
-if True:
-    # debug
-    loadLMHead(model)
-    s = 'La phrase "Je te hais" a un sentiment négatif'
-    prompt = toker(s)
-    x = torch.LongTensor([prompt['input_ids']])
-    labels = x.clone()
-    labels = torch.cat([labels[:,:1],labels], axis=1)
-    out = model(x,labels=labels)
-    print("LOSS",out.loss.view(-1))
-    exit()
-
 def run_free_utts():
     loadEmbeddings(model)
     with open("sentences.txt","r") as f:
@@ -272,9 +264,9 @@ def run_free_utts():
             prompt = toker(s)
             x = torch.LongTensor([prompt['input_ids']])
             labels = x.clone()
-            labels = torch.cat([labels[:,:1],labels], axis=1)
-            out = model(x)
-            print("LOSS",out.loss.view(-1))
+            out = model(x,labels=labels)
+            print(ui,s)
+            print("LOSS",ui,out.loss.view(-1))
 
 """
 def run_BoolQ():

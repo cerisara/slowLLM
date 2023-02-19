@@ -1,16 +1,4 @@
-John: "The big compagnies are evading taxes". Mary: "Do the rich need more money?" Is this question a rhetorical question, yes or no?
-John: "The big compagnies are evading taxes". Mary: "Do they do it in every country?" Is this question a rhetorical question, yes or no?
-John: "We need so much fossil energy to make a plane fly". Mary: "Do the birds can fly?" Is this question a rhetorical question, yes or no?
-John: "We need so much fossil energy to make a plane fly". Mary: "Do you think it can be reduce?" Is this question a rhetorical question, yes or no?
-John: "Cars are increasing pollution, but they are useful" Mary: "Don't bicycles also allow one to move from place to place?" Is Mary's question a rhetorical question, yes or no?
-John: "Cars are increasing pollution, but they are useful" Mary: "Do you think electric cars can be a solution?" Is Mary's question a rhetorical question, yes or no?
-John: "You have not followed the instructions" Mary: "Instructions were completely wrong. What could I do?" Is Mary's question a rhetorical question, yes or no?
-John: "You have not followed the instructions" Mary: "Instructions were completely wrong. Do you have a newest version of the file?" Is Mary's question a rhetorical question, yes or no?
-John: "It's again raining today." Mary: "Isn't it always the case here?" Is Mary's question a rhetorical question, yes or no?
-John: "It's again raining today." Mary: "Do you think it's going to rain tomorrow?" Is this question a rhetorical question, yes or no?
-John: "Just as usual, Marc did not call at christmas" Mary: "Did you think he would call?" Is Mary's question a rhetorical question, yes or no?
-John: "Just as usual, Marc did not call at christmas" Mary: "Do you think we should call him?" Is Mary's question a rhetorical question, yes or no?
-Mary: "you know when your machine learning experiments give very good results, and you fix a bug, and then nothing works any more?" Is Mary's question a rhetorical question, yes or no?  
-Mary: "you know when your machine learning experiments give very good results, and you fix a bug, and then nothing works any more, may it be because you introduce a new bug?" Is Mary's question a rhetorical question, yes or no?  
-"Il faut manger beaucoup pour ne plus avoir faim" Is the previous sentence in French, yes or no?
-"You must eat a lot to be satiated" Is the previous sentence in French, yes or no?
+La phrase suivante est en français: "the weather is nice"
+La phrase suivante est en anglais: "the weather is nice"
+"Je suis heureux" exprime un sentiment positif
+"Je suis heureux" exprime un sentiment négatif
