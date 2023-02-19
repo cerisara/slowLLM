@@ -8,11 +8,12 @@ import torch
 import gc
 from pathlib import Path
 
-# Put here the directory where you downloaded the Bloom's parameters
+# Put here the directory where you downloaded the Bloom's parameters: absolute path with trailing /
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloom/bloom/"
 wd = "/media/xtof/556E99561C655FA8/bloomz/"
 wd = "/mnt/dos/xtof/"
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
+wd = "/home/xtof/models/bloomz/"
 
 # Do not modify below
 
@@ -40,12 +41,11 @@ class MyLinear(torch.nn.Module):
 
     def forward(self, x):
         if self.isLoaded:
-            xx = x.squeeze().to(dtype=torch.bfloat16)
-            # matmul in bf16 takes 12s for 3 tokens :-(
+            xx = x.squeeze()
             y = torch.matmul(xx,self.weight.T)
-            return y.to(torch.float32)
+            return y
         # I dont know exactly the lexicon size, but I only query yes/no anyway so... TODO: fix that!
-        return torch.zeros((1,250000))
+        return torch.zeros((1,250000),dtype=torch.bfloat16).cuda()
  
     def emptyLayer(self):
         if hasattr(self,'weight'): del self.weight
@@ -75,25 +75,26 @@ class LatentOutputs():
 class MyEmbeddings(torch.nn.Embedding):
     def __init__(self, poids):
         super().__init__(1,1)
-        self.dummy = torch.zeros((1,14336))
+        self.dummy = torch.zeros((1,14336), dtype=torch.bfloat16).cuda()
         if poids==None:
             self.isLoaded = False
         else:
             self.isLoaded = True
-            self.weight = torch.nn.Parameter(poids.to(dtype=torch.bfloat16),requires_grad=False)
+            self.weight = torch.nn.Parameter(poids,requires_grad=False)
         self.latentOutputs = None
 
     def forward(self, x):
         if self.isLoaded:
+            print("debugx",x.device)
             e=super().forward(x)
             self.latentOutputs.store(e.detach())
-            e=e.to(dtype=torch.float32)
+            # e=e.to(dtype=torch.float32)
             return e
         elif self.latentOutputs != None:
             # in the second phase, we poll previously computed outputs to pass them to the first layer
             e=self.latentOutputs.get()
             if e==None: return self.dummy.expand((x.size(0),14336))
-            e=e.to(dtype=torch.float32)
+            # e=e.to(dtype=torch.float32)
             return e
         else: return self.dummy.expand((x.size(0),14336))
 
@@ -144,9 +145,9 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         f = "0000"+str(self.numLayer+2) if self.numLayer<8 else "000"+str(self.numLayer+2)
         parms = torch.load(wd+"pytorch_model_"+f+"-of-00072.bin")
         for i in range(len(pnames)):
-            prebloc = parms['h.'+str(self.numLayer)+'.'+pnames[i]].to(dtype=torch.float32)
+            prebloc = parms['h.'+str(self.numLayer)+'.'+pnames[i]]#.to(dtype=torch.float32)
             del parms['h.'+str(self.numLayer)+'.'+pnames[i]]
-            prebloc = torch.nn.Parameter(prebloc,requires_grad=False)
+            prebloc = torch.nn.Parameter(prebloc.cuda(),requires_grad=False)
             self.assignParms(pnames[i],prebloc)
         t1 = time.time()
         print("preloaded OK",self.numLayer,t1-t0,"RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
@@ -189,10 +190,10 @@ def initModel():
         model = transformers.models.bloom.modeling_bloom.BloomForCausalLM(config)
 
     torch.nn.Embedding = MyEmbeddings(None)
-    model.transformer.word_embeddings_layernorm.weight = torch.nn.Parameter(torch.zeros(model.transformer.word_embeddings_layernorm.weight.size()),requires_grad=False)
-    model.transformer.word_embeddings_layernorm.bias = torch.nn.Parameter(torch.zeros(model.transformer.word_embeddings_layernorm.bias.size()),requires_grad=False)
-    model.transformer.ln_f.weight = torch.nn.Parameter(torch.zeros(model.transformer.ln_f.weight.size()),requires_grad=False)
-    model.transformer.ln_f.bias = torch.nn.Parameter(torch.zeros(model.transformer.ln_f.bias.size()),requires_grad=False)
+    model.transformer.word_embeddings_layernorm.weight = torch.nn.Parameter(torch.zeros(model.transformer.word_embeddings_layernorm.weight.size(),dtype=torch.bfloat16).cuda(),requires_grad=False)
+    model.transformer.word_embeddings_layernorm.bias = torch.nn.Parameter(torch.zeros(model.transformer.word_embeddings_layernorm.bias.size(),dtype=torch.bfloat16).cuda(),requires_grad=False)
+    model.transformer.ln_f.weight = torch.nn.Parameter(torch.zeros(model.transformer.ln_f.weight.size(),dtype=torch.bfloat16).cuda(),requires_grad=False)
+    model.transformer.ln_f.bias = torch.nn.Parameter(torch.zeros(model.transformer.ln_f.bias.size(),dtype=torch.bfloat16).cuda(),requires_grad=False)
     model.lm_head = MyLinear()
 
     t1 = time.time()
@@ -202,14 +203,14 @@ def initModel():
 
 def loadEmbeddings(model):
     parms = torch.load(wd+"pytorch_model_00001-of-00072.bin")
-    vparms = parms['word_embeddings.weight']
+    vparms = parms['word_embeddings.weight'].cuda()
     model.transformer.word_embeddings = MyEmbeddings(vparms)
     model.transformer.word_embeddings.isLoaded = True
     model.transformer.word_embeddings.latentOutputs = LatentOutputs()
-    vparms = parms['word_embeddings_layernorm.weight'].to(dtype=torch.float32)
-    model.transformer.word_embeddings_layernorm.weight = torch.nn.Parameter(vparms,requires_grad=False)
-    vparms = parms['word_embeddings_layernorm.bias'].to(dtype=torch.float32)
-    model.transformer.word_embeddings_layernorm.bias = torch.nn.Parameter(vparms,requires_grad=False)
+    vparms = parms['word_embeddings_layernorm.weight'].to(dtype=torch.bfloat16)
+    model.transformer.word_embeddings_layernorm.weight = torch.nn.Parameter(vparms.cuda(),requires_grad=False)
+    vparms = parms['word_embeddings_layernorm.bias'].to(dtype=torch.bfloat16)
+    model.transformer.word_embeddings_layernorm.bias = torch.nn.Parameter(vparms.cuda(),requires_grad=False)
     del parms
     gc.collect()
     print("embeddings loaded","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
@@ -220,10 +221,10 @@ def loadLMHead(model):
     model.lm_head.isLoaded = True
     # ln_f est tout petit
     parms = torch.load(wd+"pytorch_model_00072-of-00072.bin")
-    vparms = parms['ln_f.weight'].to(dtype=torch.float32)
-    model.transformer.ln_f.weight = torch.nn.Parameter(vparms,requires_grad=False)
-    vparms = parms['ln_f.bias'].to(dtype=torch.float32)
-    model.transformer.ln_f.bias = torch.nn.Parameter(vparms,requires_grad=False)
+    vparms = parms['ln_f.weight'].to(dtype=torch.bfloat16)
+    model.transformer.ln_f.weight = torch.nn.Parameter(vparms.cuda(),requires_grad=False)
+    vparms = parms['ln_f.bias'].to(dtype=torch.bfloat16)
+    model.transformer.ln_f.bias = torch.nn.Parameter(vparms.cuda(),requires_grad=False)
     del parms
     gc.collect()
     print("LMhead loaded","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
@@ -238,7 +239,7 @@ def run_free_utts():
     with open("sentences.txt","r") as f:
         for l in f.readlines():
             prompt = toker(l)
-            x = torch.LongTensor([prompt['input_ids']])
+            x = torch.LongTensor([prompt['input_ids']]).cuda()
             out = model(x)
     model.transformer.word_embeddings.emptyLayer()
     model.lm_head.emptyLayer()
@@ -249,7 +250,7 @@ def run_free_utts():
         with open("sentences.txt","r") as f:
             for s in f.readlines():
                 prompt = toker(s)
-                x = torch.LongTensor([prompt['input_ids']])
+                x = torch.LongTensor([prompt['input_ids']]).cuda()
                 out = model(x)
         allblocks[l].emptyLayer()
         allblocks[l].saveOutputs(False)
@@ -258,7 +259,7 @@ def run_free_utts():
     with open("sentences.txt","r") as f:
         for ui,s in enumerate(f.readlines()):
             prompt = toker(s)
-            x = torch.LongTensor([prompt['input_ids']])
+            x = torch.LongTensor([prompt['input_ids']]).cuda()
             out = model(x)
             logits = out.logits.view(-1)
             print("prompt",ui,s)
