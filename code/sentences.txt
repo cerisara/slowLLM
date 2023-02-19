@@ -1,3 +1,6 @@
+Le résultat de 5*4+2 est 22
+Le résultat de 5*4+2 est 21
+Le résultat de 5*4+2 est 20
 La phrase suivante est en français: "the weather is nice"
 La phrase suivante est en anglais: "the weather is nice"
 "Je suis heureux" exprime un sentiment positif
