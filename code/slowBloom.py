@@ -13,6 +13,7 @@ wd = "/home/xtof/nas1/TALC/Synalp/Models/bloom/bloom/"
 wd = "/media/xtof/556E99561C655FA8/bloomz/"
 wd = "/mnt/dos/xtof/"
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
+wd = "/home/xtof/models/bloomz/"
 
 # Do not modify below
 
@@ -40,9 +41,12 @@ class MyLinear(torch.nn.Module):
 
     def forward(self, x):
         if self.isLoaded:
+            print("enter linear")
             xx = x.squeeze().to(dtype=torch.bfloat16)
             # matmul in bf16 takes 12s for 3 tokens :-(
             y = torch.matmul(xx,self.weight.T)
+            y = y.unsqueeze(0)
+            print("in linear",y.shape)
             return y.to(torch.float32)
         # I dont know exactly the lexicon size, but I only query yes/no anyway so... TODO: fix that!
         return torch.zeros((1,250000))
@@ -259,17 +263,10 @@ def run_free_utts():
         for ui,s in enumerate(f.readlines()):
             prompt = toker(s)
             x = torch.LongTensor([prompt['input_ids']])
-            out = model(x)
-            logits = out.logits.view(-1)
-            print("prompt",ui,s)
-            print("yes",logits[18260].item(),ui)
-            print("no",logits[654].item(),ui)
-            # let's go slightly beyond yes/no questions...
-            besttok = torch.argmax(logits).item()
-            print("maxtoken",logits[besttok].item(),besttok,ui)
-
-    # token of 'yes': 18260
-    # token of 'no' : 654
+            labels = x.clone()
+            out = model(x,labels=labels)
+            print(ui,s)
+            print("LOSS",ui,out.loss.view(-1))
 
 """
 def run_BoolQ():
