@@ -342,6 +342,9 @@ def run_BoolQ():
     # token of 'False': 32349
 """
 
+t0 = time.time()
 run_free_utts()
 # run_BoolQ()
+t1 = time.time()
+print("total time required",t1-t0)
 

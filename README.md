@@ -55,3 +55,15 @@ layer before the second layer weights are loaded.
 the RAM should be realized to process more examples.
 - Although it'd be extremely slow, nothing prevent this approach to perform generation; this option shall be at least enabled.
 
+## Benchmarks
+
+- forward pass on a single sentence (13 tokens) with slowLLM, using less than 16GB of RAM, no gpu, with NVMe sdd (Micron/Crucial Technology P2 NVMe PCIe SSD (rev 01)) and cpu= AMD Ryzen 5 3600 6-Core Processor
+	- total time = 791s; loss = 4.5416; additional HDD space = 0
+
+- baseline: [vanilla accelerate recipe](https://huggingface.co/blog/bloom-inference-pytorch-scripts) on the same computer:
+note: I'm not using the safetensors version of bloomz here, so accelerate initially copies the weights into the offload dir, which roughly 
+accounts for an initial delay of. Another difference in favor of accelerate is that the computer I'm using actually has a Titan X 12GB GPU
+as well as 24GB of RAM: accelerated is exploiting both, while slowLLM figures are computed with <16GB of RAM and no GPU.
+	- total time = ; loss = 
+	- additional HDD space = 336GB
+
