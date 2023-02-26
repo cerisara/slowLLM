@@ -63,7 +63,7 @@ the RAM should be realized to process more examples.
 - baseline: [vanilla accelerate recipe](https://huggingface.co/blog/bloom-inference-pytorch-scripts) on the same computer:
 note: I'm not using the safetensors version of bloomz here, so accelerate initially copies the weights into the offload dir, which roughly 
 accounts for an initial delay of. Another difference in favor of accelerate is that the computer I'm using actually has a Titan X 12GB GPU
-as well as 24GB of RAM: accelerated is exploiting both, while slowLLM figures are computed with <16GB of RAM and no GPU.
+as well as 24GB of RAM: accelerate is exploiting the additional RAM, while slowLLM figures are computed with <16GB of RAM and no GPU. However, we tried to let accelerate also exploit the GPU, but it crashed with cuda out-of-memory error.
 	- total time = ; loss = 
 	- additional HDD space = 336GB
 
