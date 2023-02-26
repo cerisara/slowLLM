@@ -4,8 +4,9 @@ Using Large Language Models (starting with Bloom-176b and Bloomz-176b) slowly, b
 
 The principle is very simple: load the layers in RAM one by one, and process all the data through one layer,
 the pass to the next layer, and so on until the top layer and next word prediction.
-A similar behaviour may be obtained with offloading and the accelerate library, but this code 
-is more specialized as it has been designed from the ground up for this specific use case.
+A similar behaviour may be obtained with [offloading and the accelerate library](https://huggingface.co/docs/accelerate/usage_guides/big_modeling),
+but this code is more specialized as it has been designed from the ground up for this specific use case
+and a given model.
 
 ## Requirements
 
