@@ -2,7 +2,7 @@
 
 Using Large Language Models (starting with Bloom-176b and Bloomz-176b) slowly, but on commodity GPU-free personal computer.
 
-There are 3 different pieces of code to achieve that in this repo:
+There are 3 different pieces of code in this repo:
 - The main code (in code/) loads Bloom's layers one by one to perform inference on CPU-only 16GB-RAM personal computer
 - Another version of this code is an adaptation of [Arteaga's blog](https://nbviewer.org/urls/arteagac.github.io/blog/bloom_local.ipynb) that fixes some bugs with the latest version of transformers.
 - Another code exploits collaborative inference, where each node hosts a few layers and communication is achieved through web sockets.
@@ -29,45 +29,42 @@ and a given model.
 - download the Bloom-176b weights [from Huggingface Hub](https://huggingface.co/bigscience/bloom). You may also reuse or adapt the script downloadBloomz.sh available in this repo in code/ for linux.
 - download or clone this github repo
 - install in a conda/pip environment: pytorch + transformers + accelerate + datasets + promptsource
-- write in the text file code/sentences.txt one yes/no question per line
+- write in the text file code/sentences.txt one sentence per line
 - cd code; python slowLLM.py
-    - by default, this code now evaluates Bloomz on the BoolQ dataset; but there's another simpler function 'run_test_0()' that you can adapt to run bloomz on your own examples
-
-Example of yes/no questions it may answer:
-```
-John: "We need so much fossil energy to make a plane fly". Mary: "Do the birds can fly?" Is this question a rhetorical question, yes or no?
-Mary: "you know when your machine learning experiments give very good results, and you fix a bug, and then nothing works any more?" Is Mary's question a rhetorical question, yes or no?  
-```
+    - by default, this code makes a forward pass on every sentence in "sentences.txt", but there are a few other scripts, e.g., to evalute Bloomz on the BoolQ dataset.
 
 ## Limitations
 
-- **This version does not support real text generation**, this would be far too slow with autoregressive models;
+- **This version does not really support real text generation**, which is too slow with autoregressive models;
 may be in the future with text diffusion models, but not now.
-- So it is limited for now to only answer yes/no questions: many tasks can be framed as yes/no questions,
+- So it is limited for now to compute likelihood and generate 1, 2 or a few tokens maximum, such as for answering yes/no questions: many tasks can be framed as yes/no questions,
 but this may require some creative thinking.
-- Answering 10 questions with Bloom takes about the same time as answering one question:
-this time ranges between 7' to 70', depending on the speed of your hard drive.
-So it's best to write all questions at once before calling the program.
+- Pipeline parallelism is limited to about 50 input sentences maximum, if you want to stay within 16GB of RAM
 
 ## Detailed speed and requirements
 
 - RAM: 25GB (but it should be possible to reduce it to 16GB)
+
+The speed yoy may get greatly depends on your hardware.
+For instance, on a very very slow network drive, I got:
 - passing data through 1 layer: 0.5s (I tested with 16x Intel(R) Xeon(R) CPU E5-2609 v4 @ 1.70GHz)
-- loading weights of 1 layer: 55s (I tested with a very slow NAS drive, you should get much better speed)
+- loading weights of 1 layer: 55s (with a very slow NAS drive, you should get much better speed)
 - There are 70 layers, so in my case, processing 1 input requires 70 minutes;
+
 You can gain a lot of speed by putting the model's parameters onto an NVMe SSD disk.
-Also, remember to put as much questions as possible in the input file so that they all pass into the first
-layer before the second layer weights are loaded.
+For instance, the forward pass on a single sentence (13 tokens) with slowLLM, using less than 16GB of RAM, no gpu, with NVMe SSD (Micron/Crucial Technology P2 NVMe PCIe SSD (rev 01)) and cpu= AMD Ryzen 5 3600 6-Core Processor
+- total time = 791s; 
 
 ## FAQ, TODO and bugs to fix
 
 - The current approach to save every layer output to disk does not scale beyond 50 examples; a better usage of
 the RAM should be realized to process more examples.
+- Adapt the code to perform prompt tuning; this is rather straightforward.
 - Although it'd be extremely slow, nothing prevent this approach to perform generation; this option shall be at least enabled.
 
 ## Benchmarks
 
-- forward pass on a single sentence (13 tokens) with slowLLM, using less than 16GB of RAM, no gpu, with NVMe sdd (Micron/Crucial Technology P2 NVMe PCIe SSD (rev 01)) and cpu= AMD Ryzen 5 3600 6-Core Processor
+- forward pass on a single sentence (13 tokens) with slowLLM, using less than 16GB of RAM, no gpu, with NVMe SSD (Micron/Crucial Technology P2 NVMe PCIe SSD (rev 01)) and cpu= AMD Ryzen 5 3600 6-Core Processor
 	- total time = 791s; 
 
 - baseline: [vanilla accelerate recipe](https://huggingface.co/blog/bloom-inference-pytorch-scripts) on the same computer:
