@@ -171,6 +171,9 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
 
         t0 = time.time()
         if self.hasParms:
+            if self.loadInputs:
+                hidden_states = torch.load(tmpdir+"layerout."+str(self.numLayer-1)+filesuffix)
+                # print("loading input",self.numLayer-1,torch.norm(hidden_states).item())
             y0 = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache=False, output_attentions=False)
             if self.latentOutputs!=None: self.latentOutputs.store(y0[0])
             y = (y0[0], attention_mask)
@@ -278,7 +281,7 @@ def run_BoolQ():
     # just pick the first prompt for now TODO: sample randomly prompts
     protemp = list(pro.templates.values())[0]
 
-    dataset = load_dataset('boolq',split="validation[150:250]")
+    dataset = load_dataset('boolq',split="validation[0:100]")
     # start by loading the first layer in RAM and process all sentences through the first layer
     allblocks[0].loadLayer()
     for ui,ex in enumerate(dataset):
@@ -347,4 +350,3 @@ run_free_utts()
 # run_BoolQ()
 t1 = time.time()
 print("total time required",t1-t0)
-
