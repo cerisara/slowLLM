@@ -45,7 +45,6 @@ def forward(input_ids):
     # 1. Create attention mask and position encodings
     attention_mask = torch.ones(input_ids.shape).bfloat16().to(device)
     attention_mask = attention_mask.long()
-    print("att",attention_mask)
     alibi = build_alibi_tensor(attention_mask, config.num_attention_heads, torch.bfloat16).to(device)
     # 2. Load and use word embeddings
     embeddings, lnorm = load_embeddings()
@@ -55,7 +54,6 @@ def forward(input_ids):
     # 3. Load and use the BLOOM blocks sequentially
     for block_num in range(70):
         load_block(block, block_num)
-        print("att2",attention_mask)
         hidden_states = block(hidden_states, attention_mask=attention_mask, alibi=alibi)[0]
         print(".", end='')
     
@@ -70,7 +68,7 @@ def forward(input_ids):
 
 input_sentence = "The SQL command to extract all the users whose name starts with A is: "
 input_ids = tokenizer.encode(input_sentence, return_tensors='pt').to(device)
-max_tokens = 10
+max_tokens = 1
 for i in range(max_tokens):
     print(f"Token {i + 1} ", end='')
     new_id = forward(input_ids)
