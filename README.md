@@ -20,7 +20,7 @@ and a given model.
 
 ## Requirements
 
-- desktop or laptop with at least 25GB of RAM (could be reduced <16GB, PR welcome)
+- desktop or laptop with at least 16GB of RAM
 - harddrive with 400GB free to store Bloom's parameters (the fastest drive the better; NVMe SSD welcome)
 - that's it! no GPU is needed
 
@@ -43,16 +43,16 @@ but this may require some creative thinking.
 
 ## Detailed speed and requirements
 
-- RAM: 25GB (but it should be possible to reduce it to 16GB)
+- RAM: 16GB 
 
-The speed yoy may get greatly depends on your hardware.
+The speed you may get greatly depends on your hardware.
 For instance, on a very very slow network drive, I got:
 - passing data through 1 layer: 0.5s (I tested with 16x Intel(R) Xeon(R) CPU E5-2609 v4 @ 1.70GHz)
 - loading weights of 1 layer: 55s (with a very slow NAS drive, you should get much better speed)
 - There are 70 layers, so in my case, processing 1 input requires 70 minutes;
 
 You can gain a lot of speed by putting the model's parameters onto an NVMe SSD disk.
-For instance, the forward pass on a single sentence (13 tokens) with slowLLM, using less than 16GB of RAM, no gpu, with NVMe SSD (Micron/Crucial Technology P2 NVMe PCIe SSD (rev 01)) and cpu= AMD Ryzen 5 3600 6-Core Processor
+For instance, the forward pass on a single sentence (13 tokens) with slowLLM, using less than 16GB of RAM, no gpu, with NVMe SSD (Micron/Crucial Technology P2 NVMe PCIe SSD (rev 01)) and cpu= AMD Ryzen 5 3600 6-Core Processor:
 - total time = 791s; 
 
 ## FAQ, TODO and bugs to fix
