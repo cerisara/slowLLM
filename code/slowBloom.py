@@ -15,6 +15,39 @@ wd = "/mnt/dos/xtof/"
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
 wd = "/home/xtof/models/bloomz/"
 
+# note: matmul btw 57344x14336 takes 0.62s in fp32 but 3.52s in bf16 !
+# pour pouvoir stocker les + gros poids en bf16, l'idee est de convertir en fp32 juste avant
+# les poids sont les suivants:
+# h.3.input_layernorm.weight torch.Size([14336])
+# h.3.input_layernorm.bias torch.Size([14336])
+# h.3.self_attention.query_key_value.weight torch.Size([43008, 14336]) ==> BIG
+# h.3.self_attention.query_key_value.bias torch.Size([43008])
+# h.3.self_attention.dense.weight torch.Size([14336, 14336]) ==> BIG
+# h.3.self_attention.dense.bias torch.Size([14336])
+# h.3.post_attention_layernorm.weight torch.Size([14336])
+# h.3.post_attention_layernorm.bias torch.Size([14336])
+# h.3.mlp.dense_h_to_4h.weight torch.Size([57344, 14336]) ==> BIG
+# h.3.mlp.dense_h_to_4h.bias torch.Size([57344])
+# h.3.mlp.dense_4h_to_h.weight torch.Size([14336, 57344]) ==> BIG
+# h.3.mlp.dense_4h_to_h.bias torch.Size([14336])
+
+class MyLinearAtt(torch.nn.Module):
+    def __init__(self,lin):
+        super().__init__()
+        self.lin=lin
+        self.weight=self.lin.weight.data
+        self.bias=self.lin.bias.data
+
+    def forward(self,x):
+        print("myatt",self.lin.weight.shape,x.shape)
+        x32 = x.to(dtype=torch.float32)
+        w32 = self.weight.data.to(dtype=torch.float32).t()
+        b32 = self.bias.data.to(dtype=torch.float32)
+        y=torch.matmul(x32,w32)
+        y=y+b32
+        # y = y.to(dtype=torch.bfloat16)
+        return y
+
 # Do not modify below
 
 allblocks = []
@@ -118,6 +151,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         self.emptyParms = [p for p in self.parameters()]
         self.hasParms = False
         self.latentOutputs = None
+        self.self_attention.query_key_value = MyLinearAtt(self.self_attention.query_key_value)
 
     def saveOutputs(self,b):
         if b: self.latentOutputs = LatentOutputs()
@@ -171,9 +205,6 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
 
         t0 = time.time()
         if self.hasParms:
-            if self.loadInputs:
-                hidden_states = torch.load(tmpdir+"layerout."+str(self.numLayer-1)+filesuffix)
-                # print("loading input",self.numLayer-1,torch.norm(hidden_states).item())
             y0 = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache=False, output_attentions=False)
             if self.latentOutputs!=None: self.latentOutputs.store(y0[0])
             y = (y0[0], attention_mask)
