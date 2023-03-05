@@ -35,18 +35,22 @@ wd = "/home/xtof/models/bloomz/"
 
 # this class wraps the Linear class of some weights in bf16 by converting them to fp32 first
 class MyLinearAtt(torch.nn.Module):
-    def __init__(self,lin):
+    def __init__(self, nom, lin):
         super().__init__()
-        self.lin=lin
-        self.weight=self.lin.weight.data
-        self.bias=self.lin.bias.data
+        self.nom = nom
+        self.lin = lin
+        self.weight = self.lin.weight.data
+        self.bias   = self.lin.bias.data
 
     def forward(self,x):
         x32 = x.to(dtype=torch.float32)
         w32 = self.weight.data.to(dtype=torch.float32).t()
         b32 = self.bias.data.to(dtype=torch.float32)
-        y=torch.matmul(x32,w32)
-        y=y+b32
+        y = torch.matmul(x32,w32)
+        y = y+b32
+        # w32.requires_grad = True
+        # got 2 sets of parms: lin.* are meta + requires_grad
+        #                      weight,bias are allocated + does not require grad
         # y = y.to(dtype=torch.bfloat16)
         return y
 
@@ -153,9 +157,9 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         self.emptyParms = [p for p in self.parameters()]
         self.hasParms = False
         self.latentOutputs = None
-        self.self_attention.query_key_value = MyLinearAtt(self.self_attention.query_key_value)
-        self.mlp.dense_h_to_4h = MyLinearAtt(self.mlp.dense_h_to_4h)
-        self.mlp.dense_4h_to_h = MyLinearAtt(self.mlp.dense_4h_to_h)
+        self.self_attention.query_key_value = MyLinearAtt('satt',self.self_attention.query_key_value)
+        self.mlp.dense_h_to_4h = MyLinearAtt('h_4h',self.mlp.dense_h_to_4h)
+        self.mlp.dense_4h_to_h = MyLinearAtt('4h_h',self.mlp.dense_4h_to_h)
 
     def saveOutputs(self,b):
         if b: self.latentOutputs = LatentOutputs()
