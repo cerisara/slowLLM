@@ -17,6 +17,8 @@ wd = "/home/xtof/models/bloomz/"
 
 # note: matmul btw 57344x14336 takes 0.62s in fp32 but 3.52s in bf16 !
 # pour pouvoir stocker les + gros poids en bf16, l'idee est de convertir en fp32 juste avant
+# convert the largest matrix takes 0.6534 seconds and 822MB of RAM
+
 # les poids sont les suivants:
 # h.3.input_layernorm.weight torch.Size([14336])
 # h.3.input_layernorm.bias torch.Size([14336])
@@ -31,6 +33,7 @@ wd = "/home/xtof/models/bloomz/"
 # h.3.mlp.dense_4h_to_h.weight torch.Size([14336, 57344]) ==> BIG
 # h.3.mlp.dense_4h_to_h.bias torch.Size([14336])
 
+# this class wraps the Linear class of some weights in bf16 by converting them to fp32 first
 class MyLinearAtt(torch.nn.Module):
     def __init__(self,lin):
         super().__init__()
@@ -39,7 +42,6 @@ class MyLinearAtt(torch.nn.Module):
         self.bias=self.lin.bias.data
 
     def forward(self,x):
-        print("myatt",self.lin.weight.shape,x.shape)
         x32 = x.to(dtype=torch.float32)
         w32 = self.weight.data.to(dtype=torch.float32).t()
         b32 = self.bias.data.to(dtype=torch.float32)
@@ -152,6 +154,8 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         self.hasParms = False
         self.latentOutputs = None
         self.self_attention.query_key_value = MyLinearAtt(self.self_attention.query_key_value)
+        self.mlp.dense_h_to_4h = MyLinearAtt(self.mlp.dense_h_to_4h)
+        self.mlp.dense_4h_to_h = MyLinearAtt(self.mlp.dense_4h_to_h)
 
     def saveOutputs(self,b):
         if b: self.latentOutputs = LatentOutputs()
@@ -182,10 +186,14 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         f = "0000"+str(self.numLayer+2) if self.numLayer<8 else "000"+str(self.numLayer+2)
         parms = torch.load(wd+"pytorch_model_"+f+"-of-00072.bin")
         for i in range(len(pnames)):
-            prebloc = parms['h.'+str(self.numLayer)+'.'+pnames[i]].to(dtype=torch.float32)
-            del parms['h.'+str(self.numLayer)+'.'+pnames[i]]
+            if 'value.weight' in pnames[i] or 'h.weight' in pnames[i]: # or "dense.weight" in pnames[i]:
+                prebloc = parms['h.'+str(self.numLayer)+'.'+pnames[i]] # keep them in bf16 !
+            else:
+                prebloc = parms['h.'+str(self.numLayer)+'.'+pnames[i]].to(dtype=torch.float32)
+                del parms['h.'+str(self.numLayer)+'.'+pnames[i]]
             prebloc = torch.nn.Parameter(prebloc,requires_grad=False)
             self.assignParms(pnames[i],prebloc)
+
         t1 = time.time()
         print("preloaded OK",self.numLayer,t1-t0,"RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
         self.hasParms = True
@@ -216,6 +224,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
             # when the layer is empty, just pass the input unchanged
             y=(hidden_states, attention_mask)
         t1 = time.time()
+        if self.hasParms: print("TIME in 1 layer",t1-t0)
         return y
 
 def initModel():
