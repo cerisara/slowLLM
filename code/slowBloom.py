@@ -82,12 +82,13 @@ class MyLinear(torch.nn.Module):
     def forward(self, x):
         if self.isLoaded:
             print("enter linear")
-            xx = x.squeeze().to(dtype=torch.bfloat16)
+            xx = x.squeeze()#.to(dtype=torch.bfloat16)
             # matmul in bf16 takes 12s for 3 tokens :-(
-            y = torch.matmul(xx,self.weight.T)
+            # so I rather convert the matrix to fp32
+            y = torch.matmul(xx,self.weight.T.to(dtype=torch.float32))
             y = y.unsqueeze(0)
             print("in linear",y.shape)
-            return y.to(torch.float32)
+            return y#.to(torch.float32)
         # I dont know exactly the lexicon size, but I only query yes/no anyway so... TODO: fix that!
         return torch.zeros((1,250000))
  
@@ -107,9 +108,11 @@ class LatentOutputs():
         self.latent = []
         self.dostore = True
 
-    def store(self,z):
+    def store(self,z,keepgrad=False):
         # this is called once per utterance
-        if self.dostore: self.latent.append(z)
+        if self.dostore:
+            if keepgrad: self.latent.append(z)
+            else: self.latent.append(z.detach())
 
     def get(self):
         # in the second phase, we pop out all latent FIFO-style
@@ -142,7 +145,7 @@ class MyEmbeddings(torch.nn.Embedding):
                 pref0 = torch.zeros(e.size(0),e.size(1)-prefix,e.size(2)).to(dtype=torch.bfloat16)
                 prefm = torch.cat((self.prefv.expand(e.size(0),-1,-1),pref0),dim=1)
                 e[:,emask,:] = prefm[:,emask,:]
-            self.latentOutputs.store(e) # debug .detach())
+            self.latentOutputs.store(e)
             e=e.to(dtype=torch.float32)
             return e
         elif self.latentOutputs != None:
@@ -150,6 +153,7 @@ class MyEmbeddings(torch.nn.Embedding):
             e=self.latentOutputs.get()
             if e==None: return self.dummy.expand((x.size(0),14336))
             e=e.to(dtype=torch.float32)
+            e.requires_grad=True
             return e
         else: return self.dummy.expand((x.size(0),14336))
 
@@ -231,7 +235,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         t0 = time.time()
         if self.hasParms:
             y0 = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache=False, output_attentions=False)
-            if self.latentOutputs!=None: self.latentOutputs.store(y0[0])
+            if self.latentOutputs!=None: self.latentOutputs.store(y0[0],keepgrad=self.keepgraph)
             y = (y0[0], attention_mask)
         elif self.latentOutputs!=None:
             h = self.latentOutputs.get()
@@ -303,7 +307,7 @@ def showLatents():
         if allblocks[l].latentOutputs != None:
             print("LAT",l,allblocks[l].latentOutputs.tostr())
 
-def run_free_utts():
+def run_forward():
     loadEmbeddings(model)
     with open("sentences.txt","r") as f:
         for l in f.readlines():
@@ -312,23 +316,12 @@ def run_free_utts():
             if prefix>0: tokids = [0]*prefix+tokids
             x = torch.LongTensor([tokids])
             out = model(x)
-
-            oute = model.transformer.word_embeddings.latentOutputs.latent[0]
-            print("oute",oute.shape,oute.requires_grad)
-            loss = torch.norm(oute)
-            print("loss",loss.item())
-            prefixparms = model.transformer.word_embeddings.prefv
-            print("parms",prefixparms.requires_grad,prefixparms.grad)
-            loss.backward()
-            print("parms",prefixparms.requires_grad,prefixparms.grad)
-            
-            exit()
-
     showLatents()
     model.transformer.word_embeddings.emptyLayer()
     model.lm_head.emptyLayer()
 
-    for l in range(len(allblocks)):
+    # for l in range(len(allblocks)):
+    for l in range(1):
         allblocks[l].loadLayer()
         allblocks[l].saveOutputs(True)
         with open("sentences.txt","r") as f:
@@ -337,17 +330,8 @@ def run_free_utts():
                 tokids = prompt['input_ids']
                 if prefix>0: tokids = [0]*prefix+tokids
                 x = torch.LongTensor([tokids])
+                allblocks[l].keepgraph=False
                 out = model(x)
-
-                outl1 = allblocks[l].latentOutputs.latent[0]
-                print("outl1",outl1.shape,outl1.requires_grad)
-                loss = torch.norm(outl1)
-                print("loss",loss.item())
-                prefixparms = model.transformer.word_embeddings.prefv
-                print("parms",prefixparms.requires_grad,prefixparms.grad)
-                loss.backward()
-                print("parms",prefixparms.requires_grad,prefixparms.grad)
-                exit()
         showLatents()
         allblocks[l].emptyLayer()
         allblocks[l].saveOutputs(False)
@@ -363,6 +347,63 @@ def run_free_utts():
             out = model(x,labels=labels)
             print(ui,s)
             print("LOSS",ui,out.loss.view(-1))
+
+def run_backward():
+    loadEmbeddings(model)
+    with open("sentences.txt","r") as f:
+        for l in f.readlines():
+            prompt = toker(l)
+            tokids = prompt['input_ids']
+            if prefix>0: tokids = [0]*prefix+tokids
+            x = torch.LongTensor([tokids])
+            out = model(x)
+    showLatents()
+    model.transformer.word_embeddings.emptyLayer()
+    model.lm_head.emptyLayer()
+
+    for l in range(len(allblocks)):
+        allblocks[l].loadLayer()
+        allblocks[l].saveOutputs(True)
+        with open("sentences.txt","r") as f:
+            for s in f.readlines():
+                prompt = toker(s)
+                tokids = prompt['input_ids']
+                if prefix>0: tokids = [0]*prefix+tokids
+                x = torch.LongTensor([tokids])
+                allblocks[l].keepgraph=False
+                out = model(x)
+
+                if l==0:
+                    outl1 = allblocks[l].latentOutputs.latent[0]
+                    print("outl1",outl1.shape,outl1.requires_grad)
+                    outl1.retain_grad()
+                    loss = torch.norm(outl1)
+                    print("loss",loss.item())
+                    loss.backward()
+                    prefixparms = model.transformer.word_embeddings.prefv
+                    print("prefixgrad",prefixparms.requires_grad,prefixparms.grad)
+                    print("latentgrad",outl1.requires_grad,outl1.grad)
+                    exit()
+        showLatents()
+        allblocks[l].emptyLayer()
+        allblocks[l].saveOutputs(False)
+
+    loadLMHead(model)
+    with open("sentences.txt","r") as f:
+        for ui,s in enumerate(f.readlines()):
+            prompt = toker(s)
+            tokids = prompt['input_ids']
+            if prefix>0: tokids = [0]*prefix+tokids
+            x = torch.LongTensor([tokids])
+            labels = x.clone()
+            out = model(x,labels=labels)
+            print(ui,s)
+            print("LOSS",ui,out.loss.view(-1))
+
+
+def run_free_utts():
+    run_forward()
+    # run_backward()
 
 """
 def run_BoolQ():
