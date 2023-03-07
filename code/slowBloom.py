@@ -15,7 +15,7 @@ wd = "/mnt/dos/xtof/"
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
 wd = "/home/xtof/models/bloomz/"
 
-prefix = 0
+prefix = 1
 
 # note: matmul btw 57344x14336 takes 0.62s in fp32 but 3.52s in bf16 !
 # pour pouvoir stocker les + gros poids en bf16, l'idee est de convertir en fp32 juste avant
@@ -142,7 +142,7 @@ class MyEmbeddings(torch.nn.Embedding):
                 pref0 = torch.zeros(e.size(0),e.size(1)-prefix,e.size(2)).to(dtype=torch.bfloat16)
                 prefm = torch.cat((self.prefv.expand(e.size(0),-1,-1),pref0),dim=1)
                 e[:,emask,:] = prefm[:,emask,:]
-            self.latentOutputs.store(e.detach())
+            self.latentOutputs.store(e) # debug .detach())
             e=e.to(dtype=torch.float32)
             return e
         elif self.latentOutputs != None:
@@ -312,6 +312,18 @@ def run_free_utts():
             if prefix>0: tokids = [0]*prefix+tokids
             x = torch.LongTensor([tokids])
             out = model(x)
+
+            oute = model.transformer.word_embeddings.latentOutputs.latent[0]
+            print("oute",oute.shape,oute.requires_grad)
+            loss = torch.norm(oute)
+            print("loss",loss.item())
+            prefixparms = model.transformer.word_embeddings.prefv
+            print("parms",prefixparms.requires_grad,prefixparms.grad)
+            loss.backward()
+            print("parms",prefixparms.requires_grad,prefixparms.grad)
+            
+            exit()
+
     showLatents()
     model.transformer.word_embeddings.emptyLayer()
     model.lm_head.emptyLayer()
@@ -326,6 +338,16 @@ def run_free_utts():
                 if prefix>0: tokids = [0]*prefix+tokids
                 x = torch.LongTensor([tokids])
                 out = model(x)
+
+                outl1 = allblocks[l].latentOutputs.latent[0]
+                print("outl1",outl1.shape,outl1.requires_grad)
+                loss = torch.norm(outl1)
+                print("loss",loss.item())
+                prefixparms = model.transformer.word_embeddings.prefv
+                print("parms",prefixparms.requires_grad,prefixparms.grad)
+                loss.backward()
+                print("parms",prefixparms.requires_grad,prefixparms.grad)
+                exit()
         showLatents()
         allblocks[l].emptyLayer()
         allblocks[l].saveOutputs(False)
