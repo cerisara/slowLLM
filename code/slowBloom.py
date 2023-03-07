@@ -83,7 +83,7 @@ class MyLinear(torch.nn.Module):
         if self.isLoaded:
             print("enter linear")
             xx = x.squeeze()#.to(dtype=torch.bfloat16)
-            # matmul in bf16 takes 12s for 3 tokens :-(
+            # matmul in bf16 takes 12s for 3 tokens because it only uses 1 core, while it uses all cores in fp32
             # so I rather convert the matrix to fp32
             y = torch.matmul(xx,self.weight.T.to(dtype=torch.float32))
             y = y.unsqueeze(0)
@@ -107,6 +107,7 @@ class LatentOutputs():
     def __init__(self):
         self.latent = []
         self.dostore = True
+        self.getidx = -1
 
     def store(self,z,keepgrad=False):
         # this is called once per utterance
@@ -117,7 +118,11 @@ class LatentOutputs():
     def get(self):
         # in the second phase, we pop out all latent FIFO-style
         if len(self.latent)<=0: return None
-        return self.latent.pop(0)
+        # instead of popping, I keep all latents in RAM (8GB max) to facilitate backward()
+        self.getidx += 1
+        if self.getidx>=len(self.latent): self.getidx=0
+        return self.latent[self.getidx]
+        # return self.latent.pop(0)
 
     def tostr(self):
         return ' '.join([str(tuple(z.shape)) for z in self.latent])
@@ -153,7 +158,6 @@ class MyEmbeddings(torch.nn.Embedding):
             e=self.latentOutputs.get()
             if e==None: return self.dummy.expand((x.size(0),14336))
             e=e.to(dtype=torch.float32)
-            e.requires_grad=True
             return e
         else: return self.dummy.expand((x.size(0),14336))
 
@@ -301,6 +305,9 @@ def loadLMHead(model):
 model = initModel()
 toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
 
+# debug
+# allblocks = allblocks[0:2]
+
 def showLatents():
     if model.transformer.word_embeddings.latentOutputs != None: print("LAT","EE", model.transformer.word_embeddings.latentOutputs.tostr())
     for l in range(len(allblocks)):
@@ -320,8 +327,7 @@ def run_forward():
     model.transformer.word_embeddings.emptyLayer()
     model.lm_head.emptyLayer()
 
-    # for l in range(len(allblocks)):
-    for l in range(1):
+    for l in range(len(allblocks)):
         allblocks[l].loadLayer()
         allblocks[l].saveOutputs(True)
         with open("sentences.txt","r") as f:
@@ -337,6 +343,7 @@ def run_forward():
         allblocks[l].saveOutputs(False)
 
     loadLMHead(model)
+    losses = []
     with open("sentences.txt","r") as f:
         for ui,s in enumerate(f.readlines()):
             prompt = toker(s)
@@ -345,10 +352,12 @@ def run_forward():
             x = torch.LongTensor([tokids])
             labels = x.clone()
             out = model(x,labels=labels)
+            losses.append(out.loss.view(-1))
             print(ui,s)
             print("LOSS",ui,out.loss.view(-1))
+    return losses
 
-def run_backward():
+def run_backward(losses):
     loadEmbeddings(model)
     with open("sentences.txt","r") as f:
         for l in f.readlines():
@@ -402,8 +411,8 @@ def run_backward():
 
 
 def run_free_utts():
-    run_forward()
-    # run_backward()
+    losses = run_forward()
+    # run_backward(losses)
 
 """
 def run_BoolQ():
