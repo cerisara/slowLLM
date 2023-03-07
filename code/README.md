@@ -38,3 +38,8 @@ lecture d'une layer (2.466b params = 4.93GB)
 	- hors cache: 8.927s
 	- en   cache: 3.3s
 
+Pass backward fonctionne avec 1 seule sentence !
+- RAM max = 22GB
+- total time = 2108s = 35'
+- time forward = 966 = 16'
+- time backward = 1142

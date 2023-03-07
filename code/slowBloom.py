@@ -307,7 +307,7 @@ model = initModel()
 toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
 
 # debug
-allblocks = allblocks[0:2]
+# allblocks = allblocks[0:2]
 
 def showLatents():
     if model.transformer.word_embeddings.latentOutputs != None: print("LAT","EE", model.transformer.word_embeddings.latentOutputs.tostr())
