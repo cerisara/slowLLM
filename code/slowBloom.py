@@ -82,12 +82,13 @@ class MyLinear(torch.nn.Module):
     def forward(self, x):
         if self.isLoaded:
             print("enter linear")
-            xx = x.squeeze().to(dtype=torch.bfloat16)
-            # matmul in bf16 takes 12s for 3 tokens :-(
-            y = torch.matmul(xx,self.weight.T)
+            xx = x.squeeze()#.to(dtype=torch.bfloat16)
+            # matmul in bf16 takes 12s for 3 tokens because it only uses 1 core, while it uses all cores in fp32
+            # so I rather convert the matrix to fp32
+            y = torch.matmul(xx,self.weight.T.to(dtype=torch.float32))
             y = y.unsqueeze(0)
             print("in linear",y.shape)
-            return y.to(torch.float32)
+            return y#.to(torch.float32)
         # I dont know exactly the lexicon size, but I only query yes/no anyway so... TODO: fix that!
         return torch.zeros((1,250000))
  
