@@ -15,6 +15,8 @@ wd = "/mnt/dos/xtof/"
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
 wd = "/home/xtof/models/bloomz/"
 
+prefix = 0
+
 # note: matmul btw 57344x14336 takes 0.62s in fp32 but 3.52s in bf16 !
 # pour pouvoir stocker les + gros poids en bf16, l'idee est de convertir en fp32 juste avant
 # convert the largest matrix takes 0.6534 seconds and 822MB of RAM
@@ -51,7 +53,6 @@ class MyLinearAtt(torch.nn.Module):
         # w32.requires_grad = True
         # got 2 sets of parms: lin.* are meta + requires_grad
         #                      weight,bias are allocated + does not require grad
-        # y = y.to(dtype=torch.bfloat16)
         return y
 
 # Do not modify below
@@ -96,11 +97,11 @@ class MyLinear(torch.nn.Module):
         self.isLoaded=False
 
 class LatentOutputs():
-    # rather than saving all latent outputs to disk, which is slow, it's best to keep it in RAM
+    # rather than saving all latent outputs (activations) to disk, which is slow, it's best to keep it in RAM
     # we need to keep only Nutts*Ntoks*14336 float32
-    # we know that embeddings in bf16 take about 8GB, and one layer in f32 takes about 10GB
+    # we know that embeddings in bf16 take about 8GB, and one layer in f32 takes about 10GB (less with MyLinearAtt)
     # assuming Ntoks = 1000, then each latent output per utterance takes about 50MB
-    # so in 6GB, we can store 120 latent outputs, so let's take 100 examples
+    # so in 6GB, we can store 120 latent outputs, so let's max at 100 examples
 
     def __init__(self):
         self.latent = []
@@ -115,7 +116,11 @@ class LatentOutputs():
         if len(self.latent)<=0: return None
         return self.latent.pop(0)
 
+    def tostr(self):
+        return ' '.join([str(tuple(z.shape)) for z in self.latent])
+
 class MyEmbeddings(torch.nn.Embedding):
+    # store embeddings in bf16, and convert them to fp32 on the fly
     def __init__(self, poids):
         super().__init__(1,1)
         self.dummy = torch.zeros((1,14336))
@@ -125,10 +130,18 @@ class MyEmbeddings(torch.nn.Embedding):
             self.isLoaded = True
             self.weight = torch.nn.Parameter(poids.to(dtype=torch.bfloat16),requires_grad=False)
         self.latentOutputs = None
+        if prefix>0: self.prefv = torch.nn.Parameter(torch.randn(prefix,14336).to(dtype=torch.bfloat16))
 
     def forward(self, x):
         if self.isLoaded:
             e=super().forward(x)
+            if prefix>0:
+                # tried first to append the prefix, but this creates issue when computing alibi
+                # e=torch.cat((self.prefv.expand(e.size(0),-1,-1),e),dim=1)
+                emask = torch.tensor([True]*prefix+[False]*(x.size(1)-prefix))
+                pref0 = torch.zeros(e.size(0),e.size(1)-prefix,e.size(2)).to(dtype=torch.bfloat16)
+                prefm = torch.cat((self.prefv.expand(e.size(0),-1,-1),pref0),dim=1)
+                e[:,emask,:] = prefm[:,emask,:]
             self.latentOutputs.store(e.detach())
             e=e.to(dtype=torch.float32)
             return e
@@ -284,13 +297,22 @@ def loadLMHead(model):
 model = initModel()
 toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
 
+def showLatents():
+    if model.transformer.word_embeddings.latentOutputs != None: print("LAT","EE", model.transformer.word_embeddings.latentOutputs.tostr())
+    for l in range(len(allblocks)):
+        if allblocks[l].latentOutputs != None:
+            print("LAT",l,allblocks[l].latentOutputs.tostr())
+
 def run_free_utts():
     loadEmbeddings(model)
     with open("sentences.txt","r") as f:
         for l in f.readlines():
             prompt = toker(l)
-            x = torch.LongTensor([prompt['input_ids']])
+            tokids = prompt['input_ids']
+            if prefix>0: tokids = [0]*prefix+tokids
+            x = torch.LongTensor([tokids])
             out = model(x)
+    showLatents()
     model.transformer.word_embeddings.emptyLayer()
     model.lm_head.emptyLayer()
 
@@ -300,8 +322,11 @@ def run_free_utts():
         with open("sentences.txt","r") as f:
             for s in f.readlines():
                 prompt = toker(s)
-                x = torch.LongTensor([prompt['input_ids']])
+                tokids = prompt['input_ids']
+                if prefix>0: tokids = [0]*prefix+tokids
+                x = torch.LongTensor([tokids])
                 out = model(x)
+        showLatents()
         allblocks[l].emptyLayer()
         allblocks[l].saveOutputs(False)
 
@@ -309,7 +334,9 @@ def run_free_utts():
     with open("sentences.txt","r") as f:
         for ui,s in enumerate(f.readlines()):
             prompt = toker(s)
-            x = torch.LongTensor([prompt['input_ids']])
+            tokids = prompt['input_ids']
+            if prefix>0: tokids = [0]*prefix+tokids
+            x = torch.LongTensor([tokids])
             labels = x.clone()
             out = model(x,labels=labels)
             print(ui,s)
