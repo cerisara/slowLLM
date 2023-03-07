@@ -109,10 +109,10 @@ class LatentOutputs():
         self.dostore = True
         self.getidx = -1
 
-    def store(self,z,keepgrad=False):
+    def store(self,z,keepgraph=False):
         # this is called once per utterance
         if self.dostore:
-            if keepgrad: self.latent.append(z)
+            if keepgraph: self.latent.append(z)
             else: self.latent.append(z.detach())
 
     def get(self):
@@ -129,16 +129,17 @@ class LatentOutputs():
 
 class MyEmbeddings(torch.nn.Embedding):
     # store embeddings in bf16, and convert them to fp32 on the fly
-    def __init__(self, poids):
+    def __init__(self):
         super().__init__(1,1)
         self.dummy = torch.zeros((1,14336))
-        if poids==None:
-            self.isLoaded = False
-        else:
-            self.isLoaded = True
-            self.weight = torch.nn.Parameter(poids.to(dtype=torch.bfloat16),requires_grad=False)
+        self.isLoaded = False
         self.latentOutputs = None
         if prefix>0: self.prefv = torch.nn.Parameter(torch.randn(prefix,14336).to(dtype=torch.bfloat16))
+        self.keepgraph=False
+
+    def setPoids(self,poids):
+        self.isLoaded = True
+        self.weight = torch.nn.Parameter(poids.to(dtype=torch.bfloat16),requires_grad=False)
 
     def forward(self, x):
         if self.isLoaded:
@@ -150,7 +151,8 @@ class MyEmbeddings(torch.nn.Embedding):
                 pref0 = torch.zeros(e.size(0),e.size(1)-prefix,e.size(2)).to(dtype=torch.bfloat16)
                 prefm = torch.cat((self.prefv.expand(e.size(0),-1,-1),pref0),dim=1)
                 e[:,emask,:] = prefm[:,emask,:]
-            self.latentOutputs.store(e)
+                print("pass in embeds prefv",self.prefv.requires_grad)
+            self.latentOutputs.store(e,keepgraph=self.keepgraph)
             e=e.to(dtype=torch.float32)
             return e
         elif self.latentOutputs != None:
@@ -239,7 +241,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         t0 = time.time()
         if self.hasParms:
             y0 = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache=False, output_attentions=False)
-            if self.latentOutputs!=None: self.latentOutputs.store(y0[0],keepgrad=self.keepgraph)
+            if self.latentOutputs!=None: self.latentOutputs.store(y0[0],keepgraph=self.keepgraph)
             y = (y0[0], attention_mask)
         elif self.latentOutputs!=None:
             h = self.latentOutputs.get()
@@ -260,7 +262,7 @@ def initModel():
         transformers.models.bloom.modeling_bloom.BloomBlock = MyBloomBlock
         model = transformers.models.bloom.modeling_bloom.BloomForCausalLM(config)
 
-    torch.nn.Embedding = MyEmbeddings(None)
+    model.transformer.word_embeddings = MyEmbeddings()
     model.transformer.word_embeddings_layernorm.weight = torch.nn.Parameter(torch.zeros(model.transformer.word_embeddings_layernorm.weight.size()),requires_grad=False)
     model.transformer.word_embeddings_layernorm.bias = torch.nn.Parameter(torch.zeros(model.transformer.word_embeddings_layernorm.bias.size()),requires_grad=False)
     model.transformer.ln_f.weight = torch.nn.Parameter(torch.zeros(model.transformer.ln_f.weight.size()),requires_grad=False)
@@ -275,8 +277,7 @@ def initModel():
 def loadEmbeddings(model):
     parms = torch.load(wd+"pytorch_model_00001-of-00072.bin")
     vparms = parms['word_embeddings.weight']
-    model.transformer.word_embeddings = MyEmbeddings(vparms)
-    model.transformer.word_embeddings.isLoaded = True
+    model.transformer.word_embeddings.setPoids(vparms)
     model.transformer.word_embeddings.latentOutputs = LatentOutputs()
     vparms = parms['word_embeddings_layernorm.weight'].to(dtype=torch.float32)
     model.transformer.word_embeddings_layernorm.weight = torch.nn.Parameter(vparms,requires_grad=False)
@@ -306,7 +307,7 @@ model = initModel()
 toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
 
 # debug
-# allblocks = allblocks[0:2]
+allblocks = allblocks[0:2]
 
 def showLatents():
     if model.transformer.word_embeddings.latentOutputs != None: print("LAT","EE", model.transformer.word_embeddings.latentOutputs.tostr())
@@ -323,7 +324,7 @@ def run_forward():
             if prefix>0: tokids = [0]*prefix+tokids
             x = torch.LongTensor([tokids])
             out = model(x)
-    showLatents()
+    # showLatents()
     model.transformer.word_embeddings.emptyLayer()
     model.lm_head.emptyLayer()
 
@@ -338,9 +339,13 @@ def run_forward():
                 x = torch.LongTensor([tokids])
                 allblocks[l].keepgraph=False
                 out = model(x)
-        showLatents()
+        # showLatents()
         allblocks[l].emptyLayer()
         allblocks[l].saveOutputs(False)
+
+    # prepare backward: if we only want forward, we shouldn't set requires_grad here
+    outl1 = allblocks[-1].latentOutputs.latent[0]
+    outl1.requires_grad=True
 
     loadLMHead(model)
     losses = []
@@ -358,135 +363,87 @@ def run_forward():
     return losses
 
 def run_backward(losses):
-    loadEmbeddings(model)
-    with open("sentences.txt","r") as f:
-        for l in f.readlines():
-            prompt = toker(l)
-            tokids = prompt['input_ids']
-            if prefix>0: tokids = [0]*prefix+tokids
-            x = torch.LongTensor([tokids])
-            out = model(x)
-    showLatents()
+    # TODO: fix for multiple sentences
+    outl1 = allblocks[-1].latentOutputs.latent.pop(0)
+    outl1.retain_grad()
+    loss = losses[0]
+    loss.backward()
+    latentgrad=outl1.grad
+    del outl1
+    print("just computed grad at the output of layer",len(allblocks)-1,torch.norm(latentgrad),latentgrad.shape)
+
     model.transformer.word_embeddings.emptyLayer()
     model.lm_head.emptyLayer()
-
-    for l in range(len(allblocks)):
+    for l in range(len(allblocks)-1,0,-1):
         allblocks[l].loadLayer()
-        allblocks[l].saveOutputs(True)
+        allblocks[l].saveOutputs(True) # reset the latents of this layer
         with open("sentences.txt","r") as f:
-            for s in f.readlines():
+            for si,s in enumerate(f.readlines()):
                 prompt = toker(s)
                 tokids = prompt['input_ids']
                 if prefix>0: tokids = [0]*prefix+tokids
                 x = torch.LongTensor([tokids])
+                allblocks[l].keepgraph=True
+                inl1 = allblocks[l-1].latentOutputs.latent[si]
+                inl1.requires_grad=True
+                model(x)
+                inl1.retain_grad()
+                outl = allblocks[l].latentOutputs.latent.pop(0)
+                outl.backward(latentgrad,inputs=(inl1,))
+                latentgrad = inl1.grad
+                del inl1
+                print("just computed grad",l-1,torch.norm(latentgrad),latentgrad.shape)
                 allblocks[l].keepgraph=False
-                out = model(x)
-
-                if l==0:
-                    outl1 = allblocks[l].latentOutputs.latent[0]
-                    print("outl1",outl1.shape,outl1.requires_grad)
-                    outl1.retain_grad()
-                    loss = torch.norm(outl1)
-                    print("loss",loss.item())
-                    loss.backward()
-                    prefixparms = model.transformer.word_embeddings.prefv
-                    print("prefixgrad",prefixparms.requires_grad,prefixparms.grad)
-                    print("latentgrad",outl1.requires_grad,outl1.grad)
-                    exit()
-        showLatents()
         allblocks[l].emptyLayer()
-        allblocks[l].saveOutputs(False)
 
-    loadLMHead(model)
+    l=0
+    allblocks[l].loadLayer()
+    allblocks[l].saveOutputs(True) # reset the latents of this layer
     with open("sentences.txt","r") as f:
-        for ui,s in enumerate(f.readlines()):
+        for si,s in enumerate(f.readlines()):
             prompt = toker(s)
             tokids = prompt['input_ids']
             if prefix>0: tokids = [0]*prefix+tokids
             x = torch.LongTensor([tokids])
-            labels = x.clone()
-            out = model(x,labels=labels)
-            print(ui,s)
-            print("LOSS",ui,out.loss.view(-1))
+            allblocks[l].keepgraph=True
+            inl1 = model.transformer.word_embeddings.latentOutputs.latent[si]
+            inl1.requires_grad=True
+            model(x)
+            inl1.retain_grad()
+            outl = allblocks[l].latentOutputs.latent.pop(0)
+            outl.backward(latentgrad,inputs=(inl1,))
+            latentgrad = inl1.grad
+            del inl1
+            print("just computed grad at the output of embeddings",torch.norm(latentgrad),latentgrad.shape)
+            allblocks[l].keepgraph=False
+        allblocks[l].emptyLayer()
 
+    loadEmbeddings(model) # also resets latentOutputs
+    with open("sentences.txt","r") as f:
+        for si,s in enumerate(f.readlines()):
+            prompt = toker(s)
+            tokids = prompt['input_ids']
+            if prefix>0: tokids = [0]*prefix+tokids
+            x = torch.LongTensor([tokids])
+            model.transformer.word_embeddings.prefv.requires_grad=True
+            model.transformer.word_embeddings.keepgraph=True
+            model(x)
+            model.transformer.word_embeddings.prefv.retain_grad()
+            outl = model.transformer.word_embeddings.latentOutputs.latent.pop(0)
+            outl.backward(latentgrad,inputs=(model.transformer.word_embeddings.prefv,))
+            latentgrad = model.transformer.word_embeddings.prefv.grad
+            print("just computed grad in the prefix",torch.norm(latentgrad),latentgrad.shape)
+ 
 
 def run_free_utts():
+    tk = time.time()
     losses = run_forward()
-    # run_backward(losses)
+    tl = time.time()
+    print("time forward",tl-tk)
+    run_backward(losses)
+    tk = time.time()
+    print("time backward",tk-tl)
 
-"""
-def run_BoolQ():
-    from datasets import load_dataset
-    from promptsource.templates import DatasetTemplates
-
-    global filesuffix
-    pro = DatasetTemplates('super_glue/boolq')
-    # just pick the first prompt for now TODO: sample randomly prompts
-    protemp = list(pro.templates.values())[0]
-
-    dataset = load_dataset('boolq',split="validation[0:100]")
-    # start by loading the first layer in RAM and process all sentences through the first layer
-    allblocks[0].loadLayer()
-    for ui,ex in enumerate(dataset):
-        filesuffix = "."+str(ui)
-        prompt = toker(protemp.apply(ex)[0])
-        x = torch.LongTensor([prompt['input_ids']])
-        out = model(x) # save layer 0 output to disk
-    allblocks[0].emptyLayer()
-
-    # then do the same for second layer, and then 3rd...
-    for i in range(1,len(allblocks)-1):
-        # reload the input to the i^th layer from disk
-        allblocks[i].loadInputs = True
-        allblocks[i].loadLayer()
-        for ui,ex in enumerate(dataset):
-            filesuffix = "."+str(ui)
-            prompt = toker(protemp.apply(ex)[0])
-            x = torch.LongTensor([prompt['input_ids']])
-            out = model(x) # save layer i output to disk
-        allblocks[i].emptyLayer()
-        allblocks[i].loadInputs = False
-
-    # finally pass penultimate input into the last layer and get answers
-    nok,ntot=0,0
-    allblocks[-1].loadInputs = True
-    allblocks[-1].loadLayer()
-    for ui,ex in enumerate(dataset):
-        filesuffix = "."+str(ui)
-        l = protemp.apply(ex)[0]
-        prompt = toker(l)
-        x = torch.LongTensor([prompt['input_ids']])
-        out = model(x)
-        logits = out.logits.view(-1)
-
-        # reporting:
-        print("prompt",ui,l)
-        print("GOLD",ex['answer'],ui)
-        print("yes",logits[18260].item(),ui)
-        print("no",logits[654].item(),ui)
-        truesc, falsesc = logits[17867].item(), logits[32349].item()
-        print("True",truesc,ui)
-        print("False",falsesc,ui)
-        # let's go slightly beyond yes/no questions...
-        besttok = torch.argmax(logits).item()
-        print("maxtoken",logits[besttok].item(),besttok,ui)
-
-        denom = (truesc+falsesc)
-        truesc /= denom
-        falsesc /= denom
-        ntot+=1
-        if ex['answer'] and truesc>=0.5: nok+=1
-        elif (not ex['answer']) and falsesc>0.5: nok+=1
-        acc = float(nok)/float(ntot)
-        print("ACC",acc,nok,ntot)
-    allblocks[-1].emptyLayer()
-    allblocks[-1].loadInputs = False
-
-    # token of 'yes': 18260
-    # token of 'no' : 654
-    # token of 'True':  17867
-    # token of 'False': 32349
-"""
 
 t0 = time.time()
 run_free_utts()
