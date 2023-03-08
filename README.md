@@ -4,23 +4,24 @@ Using Large Language Models (starting with Bloom-176b and Bloomz-176b) slowly, b
 
 There are 3 different pieces of code in this repo:
 - The main code (in code/) loads Bloom's layers one by one to perform inference on CPU-only 16GB-RAM personal computer
+There is also a development branch for training (requires for now 25GB of RAM and roughly doubles the time of inference).
 - Another version of this code is an adaptation of [Arteaga's blog](https://nbviewer.org/urls/arteagac.github.io/blog/bloom_local.ipynb) that fixes some bugs with the latest version of transformers.
 - Another code exploits collaborative inference, where each node hosts a few layers and communication is achieved through web sockets.
 
-I compared this main code (for local inference with Bloom on CPU and 16GB RAM) with two alternatives (see at the end): the accelerate library and
+I compared my main code (for local inference with Bloom on CPU and 16GB RAM) with both alternatives (see at the end): the accelerate library and
 Arteaga's code, and this main code is the only one that achieves inference in less than 15' on my personal computer.
-
-In this README, I only talk about the main code.
+It is also the only code to perform training in less than 30' on the same computer.
 
 The principle is very simple: load the layers in RAM one by one, and process all the data through one layer,
-the pass to the next layer, and so on until the top layer and next word prediction.
+then pass the activation to the next layer, and so on until the top layer and next word prediction.
+Training may then proceed by going backward through the same process.
 A similar behaviour may be obtained with [offloading and the accelerate library](https://huggingface.co/docs/accelerate/usage_guides/big_modeling),
-but this code is more specialized as it has been designed from the ground up for this specific use case
+but my code is more specialized as it has been designed from the ground up for this specific use case
 and a given model.
 
 ## Requirements
 
-- desktop or laptop with at least 16GB of RAM
+- desktop or laptop with at least 16GB (for inference) or 25GB (for training) of RAM
 - harddrive with 400GB free to store Bloom's parameters (the fastest drive the better; NVMe SSD welcome)
 - that's it! no GPU is needed
 
