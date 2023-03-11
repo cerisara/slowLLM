@@ -38,3 +38,14 @@ lecture d'une layer (2.466b params = 4.93GB)
 	- hors cache: 8.927s
 	- en   cache: 3.3s
 
+Pass backward fonctionne pour soft prompt tuning avec 1 seule sentence !
+- RAM max = 22GB
+- total time = 2108s = 35'
+- time forward = 966 = 16'
+- time backward = 1142
+
+Training is working with a single sentence:
+time forward 1096.3856613636017 [tensor([5.2762], grad_fn=<ViewBackward0>)]
+time backward 1259.036093711853
+time forward 1036.817584514618 [tensor([5.2754], grad_fn=<ViewBackward0>)]
+total time required 3393.0070238113403
