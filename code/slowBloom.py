@@ -7,6 +7,7 @@ from typing import Optional, Tuple, Union
 import torch
 import gc
 from pathlib import Path
+from pynvml import *
 
 # Put here the directory where you downloaded the Bloom's parameters
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloom/bloom/"
@@ -14,6 +15,7 @@ wd = "/media/xtof/556E99561C655FA8/bloomz/"
 wd = "/mnt/dos/xtof/"
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
 wd = "/home/xtof/models/bloomz/"
+wd = "/gpfsdswork/dataset/HuggingFace_Models/bigscience/bloom/"
 
 prefix = 1
 
@@ -207,17 +209,21 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         gc.collect()
         self.hasParms = False
 
-    def loadLayer(self):
+    def loadLayer(self,dev="cpu"):
         print("load weights from disk")
         t0 = time.time()
-        f = "0000"+str(self.numLayer+2) if self.numLayer<8 else "000"+str(self.numLayer+2)
-        parms = torch.load(wd+"pytorch_model_"+f+"-of-00072.bin")
+        # attention: les fichiers sur JZ ne sont pas comme chez moi: il faudrait utiliser le json!
+        f = "0000"+str(self.numLayer+3) if self.numLayer<7 else "000"+str(self.numLayer+3)
+
+        parms = torch.load(wd+"pytorch_model-"+f+"-of-00072.bin")
         for i in range(len(pnames)):
             if 'value.weight' in pnames[i] or 'h.weight' in pnames[i]: # or "dense.weight" in pnames[i]:
                 prebloc = parms['h.'+str(self.numLayer)+'.'+pnames[i]] # keep them in bf16 !
             else:
                 prebloc = parms['h.'+str(self.numLayer)+'.'+pnames[i]].to(dtype=torch.float32)
                 del parms['h.'+str(self.numLayer)+'.'+pnames[i]]
+            prebloc = prebloc.to(dev)
+            # si je fais .to(dev) apres, cela convertit un Parameter en FloatTensor ??
             prebloc = torch.nn.Parameter(prebloc,requires_grad=False)
             self.assignParms(pnames[i],prebloc)
 
@@ -451,10 +457,34 @@ def train_soft_prompt():
     print("delta_prefix",torch.norm(model.transformer.word_embeddings.prefv-prefv0).item())
     save_prefix()
 
+def print_usage_gpu():
+    nvmlInit()
+    handle = nvmlDeviceGetHandleByIndex(0)
+    info = nvmlDeviceGetMemoryInfo(handle)
+    print("GPU mem(MB)", info.used//1024**2)
 
 # ###################################
 
 model = initModel()
+
+# GPU VRAM 1 layer = 
+# attention ! les noms des parametres et des fichiers ne sont pas les memes !
+
+allblocks[0].loadLayer("cuda:0")
+allblocks[1].loadLayer("cuda:0")
+allblocks[2].loadLayer("cuda:0")
+allblocks[3].loadLayer("cuda:0")
+allblocks[4].loadLayer("cuda:0")
+allblocks[5].loadLayer("cuda:0")
+allblocks[6].loadLayer("cuda:0")
+allblocks[7].loadLayer("cuda:0")
+allblocks[8].loadLayer("cuda:0")
+
+print_usage_gpu()
+
+exit()
+
+
 toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
 
 # debug
