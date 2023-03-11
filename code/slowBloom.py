@@ -446,18 +446,19 @@ def train_soft_prompt():
     tk = time.time()
     print("time backward",tk-tl)
     prefv0 = model.transformer.word_embeddings.prefv.clone()
-    opt = torch.optim.SGD(model.transformer.word_embeddings.prefv, lr=0.01)
+    opt = torch.optim.SGD([model.transformer.word_embeddings.prefv], lr=0.1)
     opt.step()
     print("delta_prefix",torch.norm(model.transformer.word_embeddings.prefv-prefv0).item())
     save_prefix()
 
 
 # ###################################
-# debug
-# allblocks = allblocks[0:2]
 
 model = initModel()
 toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
+
+# debug
+# allblocks = allblocks[0:2]
 
 t0 = time.time()
 train_soft_prompt()
