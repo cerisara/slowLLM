@@ -45,5 +45,7 @@ Pass backward fonctionne pour soft prompt tuning avec 1 seule sentence !
 - time backward = 1142
 
 Training is working with a single sentence:
-LOSS 0 tensor([5.2762], grad_fn=<ViewBackward0>)
-LOSS 0 tensor([5.2754], grad_fn=<ViewBackward0>)
+time forward 1096.3856613636017 [tensor([5.2762], grad_fn=<ViewBackward0>)]
+time backward 1259.036093711853
+time forward 1036.817584514618 [tensor([5.2754], grad_fn=<ViewBackward0>)]
+total time required 3393.0070238113403
