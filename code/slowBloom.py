@@ -301,13 +301,6 @@ def loadLMHead(model):
     gc.collect()
     print("LMhead loaded","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
-# ###################################
-
-model = initModel()
-toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
-
-# debug
-# allblocks = allblocks[0:2]
 
 def showLatents():
     if model.transformer.word_embeddings.latentOutputs != None: print("LAT","EE", model.transformer.word_embeddings.latentOutputs.tostr())
@@ -433,20 +426,41 @@ def run_backward(losses):
             outl.backward(latentgrad,inputs=(model.transformer.word_embeddings.prefv,))
             latentgrad = model.transformer.word_embeddings.prefv.grad
             print("just computed grad in the prefix",torch.norm(latentgrad),latentgrad.shape)
- 
 
-def run_free_utts():
+def save_prefix():
+    torch.save(model.transformer.word_embeddings.prefv,"prefv.pt")
+
+def run_inference():
     tk = time.time()
     losses = run_forward()
     tl = time.time()
-    print("time forward",tl-tk)
+    print("time forward",tl-tk,losses)
+
+def train_soft_prompt():
+    print("train a soft prompt on sentences.txt (must contain a single sentence for now)")
+    tk = time.time()
+    losses = run_forward()
+    tl = time.time()
+    print("time forward",tl-tk,losses)
     run_backward(losses)
     tk = time.time()
     print("time backward",tk-tl)
+    prefv0 = model.transformer.word_embeddings.prefv.clone()
+    opt = torch.optim.SGD(model.transformer.word_embeddings.prefv, lr=0.01)
+    opt.step()
+    print("delta_prefix",torch.norm(model.transformer.word_embeddings.prefv-prefv0).item())
+    save_prefix()
 
+
+# ###################################
+# debug
+# allblocks = allblocks[0:2]
+
+model = initModel()
+toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
 
 t0 = time.time()
-run_free_utts()
-# run_BoolQ()
+train_soft_prompt()
+run_inference()
 t1 = time.time()
 print("total time required",t1-t0)
