@@ -47,8 +47,10 @@ class MyLinearAtt(torch.nn.Module):
         self.lin = lin
         self.weight = self.lin.weight.data
         self.bias   = self.lin.bias.data
+        self.passthru = False
 
     def forward(self,x):
+        if self.passthru: return x
         x32 = x.to(dtype=torch.float32)
         w32 = self.weight.data.to(dtype=torch.float32).t()
         b32 = self.bias.data.to(dtype=torch.float32)
@@ -82,9 +84,10 @@ class MyLinear(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.isLoaded = False
+        self.passthru = False
 
     def forward(self, x):
-        if self.isLoaded:
+        if self.isLoaded and not self.passthru:
             print("enter linear")
             xx = x.squeeze()#.to(dtype=torch.bfloat16)
             # matmul in bf16 takes 12s for 3 tokens because it only uses 1 core, while it uses all cores in fp32
@@ -97,9 +100,13 @@ class MyLinear(torch.nn.Module):
         return torch.zeros((1,250000))
  
     def emptyLayer(self):
-        if hasattr(self,'weight'): del self.weight
-        gc.collect()
-        self.isLoaded=False
+        print("ERR called emptylayer")
+
+def print_usage_gpu():
+    nvmlInit()
+    handle = nvmlDeviceGetHandleByIndex(0)
+    info = nvmlDeviceGetMemoryInfo(handle)
+    print("GPU mem(MB)", info.used//1024**2)
 
 class LatentOutputs():
     # rather than saving all latent outputs (activations) to disk, which is slow, it's best to keep it in RAM
@@ -140,13 +147,14 @@ class MyEmbeddings(torch.nn.Embedding):
         self.latentOutputs = None
         if prefix>0: self.prefv = torch.nn.Parameter(torch.randn(prefix,14336).to(dtype=torch.bfloat16))
         self.keepgraph=False
+        self.passthru = False
 
     def setPoids(self,poids):
         self.isLoaded = True
         self.weight = torch.nn.Parameter(poids.to(dtype=torch.bfloat16),requires_grad=False)
 
     def forward(self, x):
-        if self.isLoaded:
+        if self.isLoaded and not self.passthru:
             e=super().forward(x)
             if prefix>0:
                 # tried first to append the prefix, but this creates issue when computing alibi
@@ -168,9 +176,7 @@ class MyEmbeddings(torch.nn.Embedding):
         else: return self.dummy.expand((x.size(0),14336))
 
     def emptyLayer(self):
-        del self.weight
-        gc.collect()
-        self.isLoaded=False
+        print("ERR called emptylayer")
 
 class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
     def __init__(self, config):
@@ -187,6 +193,8 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         self.self_attention.query_key_value = MyLinearAtt('satt',self.self_attention.query_key_value)
         self.mlp.dense_h_to_4h = MyLinearAtt('h_4h',self.mlp.dense_h_to_4h)
         self.mlp.dense_4h_to_h = MyLinearAtt('4h_h',self.mlp.dense_4h_to_h)
+        self.passthru = False
+        self.keepgraph = False
 
     def saveOutputs(self,b):
         if b: self.latentOutputs = LatentOutputs()
@@ -207,16 +215,14 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         if pname==pnames[11]: self.mlp.dense_4h_to_h.bias = v
 
     def emptyLayer(self):
-        for i in range(len(pnames)):self.assignParms(pnames[i],self.emptyParms[i])
-        gc.collect()
-        self.hasParms = False
+        print("ERR called emptylayer")
 
     def loadLayer(self,dev="cpu"):
         print("load weights from disk")
         t0 = time.time()
         # attention: les fichiers sur JZ ne sont pas comme chez moi: il faudrait utiliser le json!
         f = "0000"+str(self.numLayer+2) if self.numLayer<8 else "000"+str(self.numLayer+2)
-
+        print("loading",f)
         parms = torch.load(wd+"pytorch_model_"+f+"-of-00072.bin")
         for i in range(len(pnames)):
             if 'value.weight' in pnames[i] or 'h.weight' in pnames[i]: # or "dense.weight" in pnames[i]:
@@ -224,8 +230,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
             else:
                 prebloc = parms['h.'+str(self.numLayer)+'.'+pnames[i]].to(dtype=torch.float32)
                 del parms['h.'+str(self.numLayer)+'.'+pnames[i]]
-            prebloc = prebloc.to(dev)
-            # si je fais .to(dev) apres, cela convertit un Parameter en FloatTensor ??
+            prebloc = prebloc.to("cuda:0")
             prebloc = torch.nn.Parameter(prebloc,requires_grad=False)
             self.assignParms(pnames[i],prebloc)
 
@@ -243,11 +248,14 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         use_cache: bool = False,
         output_attentions: bool = False,
     ):
-        # print("calling forward layer",self.numLayer,self.hasParms, hidden_states.device)
-        # print("layer input",torch.norm(hidden_states).item())
+        print("calling forward layer",self.numLayer,self.hasParms, hidden_states.device)
+        print("layer input",torch.norm(hidden_states).item())
 
         t0 = time.time()
-        if self.hasParms:
+        if self.hasParms and not self.passthru:
+            hidden_states = hidden_states.to("cuda:0")
+            if alibi!=None: alibi = alibi.to("cuda:0")
+            if attention_mask!=None: attention_mask = attention_mask.to("cuda:0")
             y0 = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache=False, output_attentions=False)
             if self.latentOutputs!=None: self.latentOutputs.store(y0[0],keepgraph=self.keepgraph)
             y = (y0[0], attention_mask)
@@ -260,6 +268,12 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
             y=(hidden_states, attention_mask)
         t1 = time.time()
         if self.hasParms: print("TIME in 1 layer",t1-t0)
+
+        # the LM head is on the CPU, as well as the embeddings...
+        if self.numLayer>=69: y = (y[0].to("cpu"),y[1].to("cpu"))
+        if self.numLayer<len(allblocks)-1:
+            # detach so that VRAM is freed from internal layer activations
+            y = (y[0].detach(),y[1].detach())
         return y
 
 def initModel():
@@ -317,39 +331,10 @@ def showLatents():
             print("LAT",l,allblocks[l].latentOutputs.tostr())
 
 def run_forward():
-    loadEmbeddings(model)
-    with open("sentences.txt","r") as f:
-        for l in f.readlines():
-            prompt = toker(l)
-            tokids = prompt['input_ids']
-            if prefix>0: tokids = [0]*prefix+tokids
-            x = torch.LongTensor([tokids])
-            out = model(x)
-    # showLatents()
-    model.transformer.word_embeddings.emptyLayer()
-    model.lm_head.emptyLayer()
-
-    for l in range(len(allblocks)):
-        allblocks[l].loadLayer()
-        allblocks[l].saveOutputs(True)
-        with open("sentences.txt","r") as f:
-            for s in f.readlines():
-                prompt = toker(s)
-                tokids = prompt['input_ids']
-                if prefix>0: tokids = [0]*prefix+tokids
-                x = torch.LongTensor([tokids])
-                allblocks[l].keepgraph=False
-                out = model(x)
-        # showLatents()
-        allblocks[l].emptyLayer()
-        allblocks[l].saveOutputs(False)
-
-    # prepare backward: if we only want forward, we shouldn't set requires_grad here
-    outl1 = allblocks[-1].latentOutputs.latent[0]
-    outl1.requires_grad=True
-
     loadLMHead(model)
     losses = []
+    for l in range(len(allblocks)): allblocks[l].saveOutputs(True)
+    allblocks[-1].keepgraph=True
     with open("sentences.txt","r") as f:
         for ui,s in enumerate(f.readlines()):
             prompt = toker(s)
@@ -361,6 +346,15 @@ def run_forward():
             losses.append(out.loss.view(-1))
             print(ui,s)
             print("LOSS",ui,out.loss.view(-1))
+    print("After forward: so all activations + gradient checkpoints in VRAM?")
+    print_usage_gpu()
+    showLatents()
+
+    # prepare backward: if we only want forward, we shouldn't set requires_grad here
+    outl1 = allblocks[-1].latentOutputs.latent[0]
+    outl1.requires_grad=True
+    print("last activ checkpoint",outl1.device,torch.norm(outl1).item())
+    for l in losses: l.requires_grad = True
     return losses
 
 def run_backward(losses):
@@ -373,11 +367,12 @@ def run_backward(losses):
     del outl1
     print("just computed grad at the output of layer",len(allblocks)-1,torch.norm(latentgrad),latentgrad.shape)
 
-    model.transformer.word_embeddings.emptyLayer()
-    model.lm_head.emptyLayer()
+    model.transformer.word_embeddings.passthru = True
+    model.lm_head.passthru = True
     for l in range(len(allblocks)-1,0,-1):
-        allblocks[l].loadLayer()
         allblocks[l].saveOutputs(True) # reset the latents of this layer
+        for ll in range(len(allblocks)): allblocks[l].passthru = True
+        allblocks[l].passthru = False
         with open("sentences.txt","r") as f:
             for si,s in enumerate(f.readlines()):
                 prompt = toker(s)
@@ -395,11 +390,11 @@ def run_backward(losses):
                 del inl1
                 print("just computed grad",l-1,torch.norm(latentgrad),latentgrad.shape)
                 allblocks[l].keepgraph=False
-        allblocks[l].emptyLayer()
 
     l=0
-    allblocks[l].loadLayer()
     allblocks[l].saveOutputs(True) # reset the latents of this layer
+    for ll in range(len(allblocks)): allblocks[l].passthru = True
+    allblocks[l].passthru = False
     with open("sentences.txt","r") as f:
         for si,s in enumerate(f.readlines()):
             prompt = toker(s)
@@ -417,9 +412,8 @@ def run_backward(losses):
             del inl1
             print("just computed grad at the output of embeddings",torch.norm(latentgrad),latentgrad.shape)
             allblocks[l].keepgraph=False
-        allblocks[l].emptyLayer()
 
-    loadEmbeddings(model) # also resets latentOutputs
+    model.transformer.word_embeddings.latentOutputs = LatentOutputs()
     with open("sentences.txt","r") as f:
         for si,s in enumerate(f.readlines()):
             prompt = toker(s)
@@ -459,12 +453,6 @@ def train_soft_prompt():
     print("delta_prefix",torch.norm(model.transformer.word_embeddings.prefv-prefv0).item())
     save_prefix()
 
-def print_usage_gpu():
-    nvmlInit()
-    handle = nvmlDeviceGetHandleByIndex(0)
-    info = nvmlDeviceGetMemoryInfo(handle)
-    print("GPU mem(MB)", info.used//1024**2)
-
 # ###################################
 
 model = initModel()
@@ -491,13 +479,10 @@ allblocks[8].loadLayer("cuda:0")
 
 print_usage_gpu()
 
-exit()
-
-
 toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
 
 # debug
-# allblocks = allblocks[0:2]
+allblocks = allblocks[0:9]
 
 t0 = time.time()
 train_soft_prompt()
