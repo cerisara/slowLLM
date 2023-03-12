@@ -432,12 +432,12 @@ def run_backward(losses):
                 del inl1
                 print("just computed grad",l-1,torch.norm(latentgrad),latentgrad.shape)
                 allblocks[l].keepgraph=False
+                print_usage_gpu()
 
     l=0
     allblocks[l].saveOutputs(True) # reset the latents of this layer
     for ll in range(len(allblocks)): allblocks[ll].passthru = True
     allblocks[l].passthru = False
-    model.transformer.word_embeddings.prefv.requires_grad=True
     model.transformer.word_embeddings.keepgraph=True
     model.transformer.word_embeddings.passthru=False
     with open("sentences.txt","r") as f:
@@ -447,17 +447,17 @@ def run_backward(losses):
             if prefix>0: tokids = [0]*prefix+tokids
             x = torch.LongTensor([tokids])
             allblocks[l].keepgraph=True
-            inl1 = model.transformer.word_embeddings.latentOutputs.latent[si]
+            inl1 = model.transformer.word_embeddings.prefv
             inl1.requires_grad=True
             model(x)
             inl1.retain_grad()
             outl = allblocks[l].latentOutputs.latent.pop(0)
             outl.backward(latentgrad,inputs=(inl1,))
             latentgrad = inl1.grad
-            del inl1
             print("just computed grad at the output of embeddings",torch.norm(latentgrad),latentgrad.shape)
             latentgrad = model.transformer.word_embeddings.prefv.grad
             print("just computed grad in the prefix",torch.norm(latentgrad),latentgrad.shape)
+            del inl1
 
 def save_prefix():
     torch.save(model.transformer.word_embeddings.prefv,"prefv.pt")

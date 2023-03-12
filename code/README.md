@@ -9,8 +9,8 @@ I'll need to place 9 layers per GPU, and will use only SGD
 - each layer is 5BG in bf16, so 9 layers = 45GB for the parameters in 1 GPU
 - gradient checkpointing: during the forward pass, I only keep the activations at the output of each layer
   = 120MB/layer (for 2048 tokens and 14337 vec dim) = 1.2GB per GPU
-- during forward, all activations inside 1 layer will have to be computed = ??
-- during backward, same + gradients inside 1 layer = ??
+
+In total, for one GPU, forward requires 57GB (9x theta + 9x activation checkpoints + 1x in-layer-graph with activations and gradients)
 
 --------------------------------
 
