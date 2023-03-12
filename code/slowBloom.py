@@ -39,6 +39,37 @@ prefix = 1
 # h.3.mlp.dense_4h_to_h.weight torch.Size([14336, 57344]) ==> BIG
 # h.3.mlp.dense_4h_to_h.bias torch.Size([14336])
 
+def _draw_graph(var, watch=[], seen=[], indent="", pobj=None):
+    from rich import print
+    if hasattr(var, "next_functions"):
+        for fun in var.next_functions:
+            joy = fun[0]
+            if joy is not None:
+                if joy not in seen:
+                    label = str(type(joy)).replace("class", "").replace("'", "").replace(" ", "")
+                    label_graph = label
+                    colour_graph = ""
+                    seen.append(joy)
+                    if hasattr(joy, 'variable'):
+                        happy = joy.variable
+                        if happy.is_leaf:
+                            label += " \U0001F343"
+                            colour_graph = "green"                            
+                            for (name, obj) in watch:
+                                if obj is happy:
+                                    label += " \U000023E9 " + "[b][u][color=#FF00FF]" + name + "[/color][/u][/b]"
+                                    label_graph += name                                    
+                                    colour_graph = "blue"
+                                    break                            
+                                vv = [str(obj.shape[x]) for x in range(len(obj.shape))]
+                            label += " [["
+                            label += ', '.join(vv)
+                            label += "]]"
+                            label += " " + str(happy.var())                    
+                    print(indent + label)
+                    _draw_graph(joy, watch, seen, indent + ".", joy)
+
+
 # this class wraps the Linear class of some weights in bf16 by converting them to fp32 first
 class MyLinearAtt(torch.nn.Module):
     def __init__(self, nom, lin):
@@ -88,7 +119,7 @@ class MyLinear(torch.nn.Module):
 
     def forward(self, x):
         if self.isLoaded and not self.passthru:
-            print("enter linear")
+            print("enter linear",x.storage().data_ptr(),x.requires_grad,x.device)
             xx = x.squeeze()#.to(dtype=torch.bfloat16)
             # matmul in bf16 takes 12s for 3 tokens because it only uses 1 core, while it uses all cores in fp32
             # so I rather convert the matrix to fp32
@@ -97,6 +128,7 @@ class MyLinear(torch.nn.Module):
             print("in linear",y.shape)
             return y#.to(torch.float32)
         # I dont know exactly the lexicon size, but I only query yes/no anyway so... TODO: fix that!
+        print("in linear pass thru")
         return torch.zeros((1,250000))
  
     def emptyLayer(self):
@@ -123,7 +155,10 @@ class LatentOutputs():
     def store(self,z,keepgraph=False):
         # this is called once per utterance
         if self.dostore:
-            if keepgraph: self.latent.append(z)
+            if keepgraph:
+                if z.is_leaf: z.requires_grad=True
+                self.latent.append(z)
+                print("storing",z.requires_grad,z.storage().data_ptr())
             else: self.latent.append(z.detach())
 
     def get(self):
@@ -259,6 +294,11 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
             y0 = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache=False, output_attentions=False)
             if self.latentOutputs!=None: self.latentOutputs.store(y0[0],keepgraph=self.keepgraph)
             y = (y0[0], attention_mask)
+            print("just computed output",y0[0].storage().data_ptr(),y0[0].device,self.keepgraph,self.numLayer)
+            if not self.keepgraph:
+                # detach so that VRAM is freed from internal layer activations
+                y = (y[0].detach(),y[1].detach())
+            else: print("KEEPGRAPH",self.numLayer,y[0].storage().data_ptr())
         elif self.latentOutputs!=None:
             h = self.latentOutputs.get()
             if h==None: y=(hidden_states, attention_mask)
@@ -270,10 +310,11 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         if self.hasParms: print("TIME in 1 layer",t1-t0)
 
         # the LM head is on the CPU, as well as the embeddings...
-        if self.numLayer>=69: y = (y[0].to("cpu"),y[1].to("cpu"))
-        if self.numLayer<len(allblocks)-1:
-            # detach so that VRAM is freed from internal layer activations
-            y = (y[0].detach(),y[1].detach())
+        if self.numLayer>=69:
+            print("passing to CPU",y[0].storage().data_ptr(),y[0].requires_grad,self.keepgraph)
+            y = (y[0].to("cpu"),y[1].to("cpu"))
+            # je ne devrais pas avoir besoin de le faire, car c'est deja fait dans store() et pourtant ?
+            # y[0].requires_grad=True
         return y
 
 def initModel():
@@ -354,16 +395,17 @@ def run_forward():
     outl1 = allblocks[-1].latentOutputs.latent[0]
     outl1.requires_grad=True
     print("last activ checkpoint",outl1.device,torch.norm(outl1).item())
-    for l in losses: l.requires_grad = True
     return losses
 
 def run_backward(losses):
     # TODO: fix for multiple sentences
     outl1 = allblocks[-1].latentOutputs.latent.pop(0)
+    print("latentnode",outl1.storage().data_ptr(),outl1.requires_grad)
     outl1.retain_grad()
     loss = losses[0]
     loss.backward()
     latentgrad=outl1.grad
+    print("latentgrad",latentgrad)
     del outl1
     print("just computed grad at the output of layer",len(allblocks)-1,torch.norm(latentgrad),latentgrad.shape)
 
@@ -371,7 +413,7 @@ def run_backward(losses):
     model.lm_head.passthru = True
     for l in range(len(allblocks)-1,0,-1):
         allblocks[l].saveOutputs(True) # reset the latents of this layer
-        for ll in range(len(allblocks)): allblocks[l].passthru = True
+        for ll in range(len(allblocks)): allblocks[ll].passthru = True
         allblocks[l].passthru = False
         with open("sentences.txt","r") as f:
             for si,s in enumerate(f.readlines()):
@@ -393,8 +435,11 @@ def run_backward(losses):
 
     l=0
     allblocks[l].saveOutputs(True) # reset the latents of this layer
-    for ll in range(len(allblocks)): allblocks[l].passthru = True
+    for ll in range(len(allblocks)): allblocks[ll].passthru = True
     allblocks[l].passthru = False
+    model.transformer.word_embeddings.prefv.requires_grad=True
+    model.transformer.word_embeddings.keepgraph=True
+    model.transformer.word_embeddings.passthru=False
     with open("sentences.txt","r") as f:
         for si,s in enumerate(f.readlines()):
             prompt = toker(s)
@@ -411,21 +456,6 @@ def run_backward(losses):
             latentgrad = inl1.grad
             del inl1
             print("just computed grad at the output of embeddings",torch.norm(latentgrad),latentgrad.shape)
-            allblocks[l].keepgraph=False
-
-    model.transformer.word_embeddings.latentOutputs = LatentOutputs()
-    with open("sentences.txt","r") as f:
-        for si,s in enumerate(f.readlines()):
-            prompt = toker(s)
-            tokids = prompt['input_ids']
-            if prefix>0: tokids = [0]*prefix+tokids
-            x = torch.LongTensor([tokids])
-            model.transformer.word_embeddings.prefv.requires_grad=True
-            model.transformer.word_embeddings.keepgraph=True
-            model(x)
-            model.transformer.word_embeddings.prefv.retain_grad()
-            outl = model.transformer.word_embeddings.latentOutputs.latent.pop(0)
-            outl.backward(latentgrad,inputs=(model.transformer.word_embeddings.prefv,))
             latentgrad = model.transformer.word_embeddings.prefv.grad
             print("just computed grad in the prefix",torch.norm(latentgrad),latentgrad.shape)
 
@@ -445,11 +475,15 @@ def train_soft_prompt():
     tl = time.time()
     print("time forward",tl-tk,losses)
     run_backward(losses)
+    print("grad bef SGD0",torch.norm(model.transformer.word_embeddings.prefv.grad).item())
     tk = time.time()
     print("time backward",tk-tl)
     prefv0 = model.transformer.word_embeddings.prefv.clone()
     opt = torch.optim.SGD([model.transformer.word_embeddings.prefv], lr=0.1)
+    print("vec bef SGD",torch.norm(model.transformer.word_embeddings.prefv).item())
+    print("grad bef SGD",torch.norm(model.transformer.word_embeddings.prefv.grad).item())
     opt.step()
+    print("vec aft SGD",torch.norm(model.transformer.word_embeddings.prefv).item())
     print("delta_prefix",torch.norm(model.transformer.word_embeddings.prefv-prefv0).item())
     save_prefix()
 
@@ -486,6 +520,5 @@ allblocks = allblocks[0:9]
 
 t0 = time.time()
 train_soft_prompt()
-run_inference()
 t1 = time.time()
 print("total time required",t1-t0)
