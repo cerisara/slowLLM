@@ -15,7 +15,9 @@ wd = "/media/xtof/556E99561C655FA8/bloomz/"
 wd = "/mnt/dos/xtof/"
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
 wd = "/home/xtof/models/bloomz/"
+# this version of Bloom on JZ does not assign one layer to one file ! So I use my own version next:
 wd = "/gpfsdswork/dataset/HuggingFace_Models/bigscience/bloom/"
+wd = "/gpfswork/rech/knb/uyr14tk/home/bloom/model176b/"
 
 prefix = 1
 
@@ -213,9 +215,9 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         print("load weights from disk")
         t0 = time.time()
         # attention: les fichiers sur JZ ne sont pas comme chez moi: il faudrait utiliser le json!
-        f = "0000"+str(self.numLayer+3) if self.numLayer<7 else "000"+str(self.numLayer+3)
+        f = "0000"+str(self.numLayer+2) if self.numLayer<8 else "000"+str(self.numLayer+2)
 
-        parms = torch.load(wd+"pytorch_model-"+f+"-of-00072.bin")
+        parms = torch.load(wd+"pytorch_model_"+f+"-of-00072.bin")
         for i in range(len(pnames)):
             if 'value.weight' in pnames[i] or 'h.weight' in pnames[i]: # or "dense.weight" in pnames[i]:
                 prebloc = parms['h.'+str(self.numLayer)+'.'+pnames[i]] # keep them in bf16 !
@@ -467,8 +469,15 @@ def print_usage_gpu():
 
 model = initModel()
 
-# GPU VRAM 1 layer = 
+# GPU VRAM 1 layer  = 11 GB! (j'avais calcule 5GB) car c'est du fp32? (non, les plus grosses matrices sont en bf16)
+# GPU VRAM 2 layers = 12 GB: OK, donc il avait alloue plus de VRAM que necessaire...
+# GPU VRAM 4 layers = 22 GB: OK, je retrouve ce que j'ai predit
+# GPU VRAM 9 layers = 48 GB
+# avec 9 layers chargees dans cuda:0 + activation checkpoints a la sortie de chaque layer + internal activations dans une seule layer: VRAM = 57 GB
+# ==> TODO: charger aussi les embeddings sur cuda:0 ?
+
 # attention ! les noms des parametres et des fichiers ne sont pas les memes !
+# TODO: comme tout le chargement est au debut, nul besoin d'avoir 1 layer par fichier: refaire un loading robuste
 
 allblocks[0].loadLayer("cuda:0")
 allblocks[1].loadLayer("cuda:0")
