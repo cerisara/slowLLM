@@ -12,6 +12,8 @@ I'll need to place 9 layers per GPU, and will use only SGD
 
 In total, for one GPU, forward requires 57GB (9x theta + 9x activation checkpoints + 1x in-layer-graph with activations and gradients)
 
+total time for forward + backward = 13s
+
 --------------------------------
 
 - seqlen = 2048
