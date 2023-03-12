@@ -230,6 +230,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         self.mlp.dense_4h_to_h = MyLinearAtt('4h_h',self.mlp.dense_4h_to_h)
         self.passthru = False
         self.keepgraph = False
+        self.nextBlockDev = None
 
     def saveOutputs(self,b):
         if b: self.latentOutputs = LatentOutputs()
@@ -254,6 +255,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
 
     def loadLayer(self,dev="cpu"):
         print("load weights from disk")
+        self.dev = dev
         t0 = time.time()
         # attention: les fichiers sur JZ ne sont pas comme chez moi: il faudrait utiliser le json!
         f = "0000"+str(self.numLayer+2) if self.numLayer<8 else "000"+str(self.numLayer+2)
@@ -265,7 +267,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
             else:
                 prebloc = parms['h.'+str(self.numLayer)+'.'+pnames[i]].to(dtype=torch.float32)
                 del parms['h.'+str(self.numLayer)+'.'+pnames[i]]
-            prebloc = prebloc.to("cuda:0")
+            prebloc = prebloc.to(dev)
             prebloc = torch.nn.Parameter(prebloc,requires_grad=False)
             self.assignParms(pnames[i],prebloc)
 
@@ -288,9 +290,9 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
 
         t0 = time.time()
         if self.hasParms and not self.passthru:
-            hidden_states = hidden_states.to("cuda:0")
-            if alibi!=None: alibi = alibi.to("cuda:0")
-            if attention_mask!=None: attention_mask = attention_mask.to("cuda:0")
+            hidden_states = hidden_states.to(self.dev)
+            if alibi!=None: alibi = alibi.to(self.dev)
+            if attention_mask!=None: attention_mask = attention_mask.to(self.dev)
             y0 = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache=False, output_attentions=False)
             if self.latentOutputs!=None: self.latentOutputs.store(y0[0],keepgraph=self.keepgraph)
             y = (y0[0], attention_mask)
@@ -313,8 +315,9 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         if self.numLayer>=69:
             print("passing to CPU",y[0].storage().data_ptr(),y[0].requires_grad,self.keepgraph)
             y = (y[0].to("cpu"),y[1].to("cpu"))
-            # je ne devrais pas avoir besoin de le faire, car c'est deja fait dans store() et pourtant ?
-            # y[0].requires_grad=True
+        if self.nextBlockDev!=None:
+            print("passing to GPU",self.nextBlockDev,y[0].storage().data_ptr(),y[0].requires_grad,self.keepgraph)
+            y = (y[0].to(self.nextBlockDev),y[1].to(self.nextBlockDev))
         return y
 
 def initModel():
@@ -501,22 +504,45 @@ model = initModel()
 # attention ! les noms des parametres et des fichiers ne sont pas les memes !
 # TODO: comme tout le chargement est au debut, nul besoin d'avoir 1 layer par fichier: refaire un loading robuste
 
-allblocks[0].loadLayer("cuda:0")
-allblocks[1].loadLayer("cuda:0")
-allblocks[2].loadLayer("cuda:0")
-allblocks[3].loadLayer("cuda:0")
-allblocks[4].loadLayer("cuda:0")
-allblocks[5].loadLayer("cuda:0")
-allblocks[6].loadLayer("cuda:0")
-allblocks[7].loadLayer("cuda:0")
-allblocks[8].loadLayer("cuda:0")
+i=0
+for j in range(9):
+    allblocks[i].loadLayer("cuda:0")
+    i+=1
+allblocks[i-1].nextBlockDev="cuda:1"
+for j in range(9):
+    allblocks[i].loadLayer("cuda:1")
+    i+=1
+allblocks[i-1].nextBlockDev="cuda:2"
+for j in range(9):
+    allblocks[i].loadLayer("cuda:2")
+    i+=1
+allblocks[i-1].nextBlockDev="cuda:3"
+for j in range(9):
+    allblocks[i].loadLayer("cuda:3")
+    i+=1
+allblocks[i-1].nextBlockDev="cuda:4"
+for j in range(9):
+    allblocks[i].loadLayer("cuda:4")
+    i+=1
+allblocks[i-1].nextBlockDev="cuda:5"
+for j in range(9):
+    allblocks[i].loadLayer("cuda:5")
+    i+=1
+allblocks[i-1].nextBlockDev="cuda:6"
+for j in range(9):
+    allblocks[i].loadLayer("cuda:6")
+    i+=1
+allblocks[i-1].nextBlockDev="cuda:7"
+while i<70:
+    allblocks[i].loadLayer("cuda:7")
+    i+=1
 
 print_usage_gpu()
 
 toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
 
 # debug
-allblocks = allblocks[0:9]
+# allblocks = allblocks[0:18]
 
 t0 = time.time()
 train_soft_prompt()
