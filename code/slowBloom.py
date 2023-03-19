@@ -387,7 +387,7 @@ def train_soft_prompt():
             save_prefix()
 
 def run_forward_oneutt(utt):
-    loadLMHead(model)
+    model.lm_head.passthru = False
     losses = []
     for l in range(len(allblocks)): allblocks[l].saveOutputs(True)
     allblocks[-1].keepgraph=True
@@ -465,6 +465,7 @@ def save_prefix():
 # ###################################
 
 model = initModel()
+loadLMHead(model)
 
 # GPU VRAM 1 layer  = 11 GB! (j'avais calcule 5GB) car c'est du fp32? (non, les plus grosses matrices sont en bf16)
 # GPU VRAM 2 layers = 12 GB: OK, donc il avait alloue plus de VRAM que necessaire...
