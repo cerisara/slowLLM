@@ -428,7 +428,7 @@ def run_backward(losses,x):
         for ll in range(len(allblocks)): allblocks[ll].passthru = True
         allblocks[l].passthru = False
         allblocks[l].keepgraph=True
-        inl1 = allblocks[l-1].latentOutputs.latent[si]
+        inl1 = allblocks[l-1].latentOutputs.latent[0]
         inl1.requires_grad=True
         model(x)
         inl1.retain_grad()
