@@ -149,17 +149,15 @@ class LatentOutputs():
 
     def __init__(self):
         self.latent = []
-        self.dostore = True
         self.getidx = -1
 
     def store(self,z,keepgraph=False):
         # this is called once per utterance
-        if self.dostore:
-            if keepgraph:
-                if z.is_leaf: z.requires_grad=True
-                self.latent.append(z)
-                print("storing",z.requires_grad,z.storage().data_ptr())
-            else: self.latent.append(z.detach())
+        if keepgraph:
+            if z.is_leaf: z.requires_grad=True
+            self.latent.append(z)
+            print("storing",z.requires_grad,z.storage().data_ptr())
+        else: self.latent.append(z.detach())
 
     def get(self):
         # in the second phase, we pop out all latent FIFO-style
@@ -231,10 +229,6 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         self.passthru = False
         self.keepgraph = False
         self.nextBlockDev = None
-
-    def saveOutputs(self,b):
-        if b: self.latentOutputs = LatentOutputs()
-        else: self.latentOutputs.dostore=False
 
     def assignParms(self,pname,v):
         if pname==pnames[0]: self.input_layernorm.weight = v
@@ -381,15 +375,18 @@ def train_soft_prompt():
             losses,x = run_forward_oneutt(s)
             run_backward(losses,x)
             prefv0 = model.transformer.word_embeddings.prefv.clone()
-            opt = torch.optim.SGD([model.transformer.word_embeddings.prefv], lr=0.1)
+            opt = torch.optim.SGD([model.transformer.word_embeddings.prefv], lr=0.00001)
             opt.step()
             print("delta_prefix",torch.norm(model.transformer.word_embeddings.prefv-prefv0).item())
             save_prefix()
 
 def run_forward_oneutt(utt):
+    model.transformer.word_embeddings.passthru = False
     model.lm_head.passthru = False
     losses = []
-    for l in range(len(allblocks)): allblocks[l].saveOutputs(True)
+    for l in range(len(allblocks)):
+        allblocks[l].latentOutputs = LatentOutputs()
+        allblocks[l].passthru = False
     allblocks[-1].keepgraph=True
     prompt = toker(utt)
     tokids = prompt['input_ids']
@@ -424,7 +421,7 @@ def run_backward(losses,x):
     model.transformer.word_embeddings.passthru = True
     model.lm_head.passthru = True
     for l in range(len(allblocks)-1,0,-1):
-        allblocks[l].saveOutputs(True) # reset the latents of this layer
+        allblocks[l].latentOutputs = LatentOutputs()
         for ll in range(len(allblocks)): allblocks[ll].passthru = True
         allblocks[l].passthru = False
         allblocks[l].keepgraph=True
@@ -441,11 +438,11 @@ def run_backward(losses,x):
         print_usage_gpu()
 
     l=0
-    allblocks[l].saveOutputs(True) # reset the latents of this layer
+    allblocks[l].latentOutputs = LatentOutputs()
     for ll in range(len(allblocks)): allblocks[ll].passthru = True
     allblocks[l].passthru = False
-    model.transformer.word_embeddings.keepgraph=True
     model.transformer.word_embeddings.passthru=False
+    model.transformer.word_embeddings.keepgraph=True
     allblocks[l].keepgraph=True
     inl1 = model.transformer.word_embeddings.prefv
     inl1.requires_grad=True
@@ -457,6 +454,8 @@ def run_backward(losses,x):
     print("just computed grad at the output of embeddings",torch.norm(latentgrad),latentgrad.shape)
     latentgrad = model.transformer.word_embeddings.prefv.grad
     print("just computed grad in the prefix",torch.norm(latentgrad),latentgrad.shape)
+    model.transformer.word_embeddings.keepgraph=False
+    allblocks[l].keepgraph=False
     del inl1
 
 def save_prefix():
