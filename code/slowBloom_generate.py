@@ -15,7 +15,7 @@ wd = "/mnt/dos/xtof/"
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
 wd = "/media/xtof/nvme/bloomz/"
 
-prefix = 1
+prefix = 0
 
 # note: matmul btw 57344x14336 takes 0.62s in fp32 but 3.52s in bf16 !
 # pour pouvoir stocker les + gros poids en bf16, l'idee est de convertir en fp32 juste avant
@@ -240,6 +240,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
 
         t0 = time.time()
         if self.hasParms:
+            print("debug alibi",alibi.shape,attention_mask.shape,hidden_states.shape)
             y0 = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache=False, output_attentions=False)
             if self.latentOutputs!=None: self.latentOutputs.store(y0[0],keepgraph=self.keepgraph)
             y = (y0[0], attention_mask)
@@ -302,133 +303,39 @@ def loadLMHead(model):
     print("LMhead loaded","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
 
-def showLatents():
-    if model.transformer.word_embeddings.latentOutputs != None: print("LAT","EE", model.transformer.word_embeddings.latentOutputs.tostr())
-    for l in range(len(allblocks)):
-        if allblocks[l].latentOutputs != None:
-            print("LAT",l,allblocks[l].latentOutputs.tostr())
-
-def run_forward():
+def generate(debutt):
     loadEmbeddings(model)
-    with open("sentences.txt","r") as f:
-        for l in f.readlines():
-            prompt = toker(l)
-            tokids = prompt['input_ids']
-            if prefix>0: tokids = [0]*prefix+tokids
-            x = torch.LongTensor([tokids])
-            out = model(x)
-    # showLatents()
-    model.transformer.word_embeddings.emptyLayer()
-    model.lm_head.emptyLayer()
+    prompt = toker(debutt)
+    tokids = prompt['input_ids']
+    if prefix>0: tokids = [0]*prefix+tokids
+    x = torch.LongTensor([tokids])
 
-    for l in range(len(allblocks)):
-        allblocks[l].loadLayer()
-        allblocks[l].saveOutputs(True)
-        with open("sentences.txt","r") as f:
-            for s in f.readlines():
-                prompt = toker(s)
-                tokids = prompt['input_ids']
-                if prefix>0: tokids = [0]*prefix+tokids
-                x = torch.LongTensor([tokids])
-                allblocks[l].keepgraph=False
-                out = model(x)
-        # showLatents()
-        allblocks[l].emptyLayer()
-        allblocks[l].saveOutputs(False)
+    for ntoks in range(2):
+        for l in range(len(allblocks)): allblocks[l].latentOutputs = None
+        model.transformer.word_embeddings.latentOutputs = LatentOutputs()
+        print("X",x.shape)
+        out = model(x,use_cache=False)
+        model.transformer.word_embeddings.emptyLayer()
+        model.lm_head.emptyLayer()
 
-    # prepare backward: if we only want forward, we shouldn't set requires_grad here
-    outl1 = allblocks[-1].latentOutputs.latent[0]
-    outl1.requires_grad=True
-
-    loadLMHead(model)
-    losses = []
-    with open("sentences.txt","r") as f:
-        for ui,s in enumerate(f.readlines()):
-            prompt = toker(s)
-            tokids = prompt['input_ids']
-            if prefix>0: tokids = [0]*prefix+tokids
-            x = torch.LongTensor([tokids])
-            labels = x.clone()
-            out = model(x,labels=labels)
-            losses.append(out.loss.view(-1))
-            print(ui,s)
-            print("LOSS",ui,out.loss.view(-1))
-    return losses
-
-def run_backward(losses):
-    # TODO: fix for multiple sentences
-    outl1 = allblocks[-1].latentOutputs.latent.pop(0)
-    outl1.retain_grad()
-    loss = losses[0]
-    loss.backward()
-    latentgrad=outl1.grad
-    del outl1
-    print("just computed grad at the output of layer",len(allblocks)-1,torch.norm(latentgrad),latentgrad.shape)
-
-    model.transformer.word_embeddings.emptyLayer()
-    model.lm_head.emptyLayer()
-    for l in range(len(allblocks)-1,0,-1):
-        allblocks[l].loadLayer()
-        allblocks[l].saveOutputs(True) # reset the latents of this layer
-        with open("sentences.txt","r") as f:
-            for si,s in enumerate(f.readlines()):
-                prompt = toker(s)
-                tokids = prompt['input_ids']
-                if prefix>0: tokids = [0]*prefix+tokids
-                x = torch.LongTensor([tokids])
-                allblocks[l].keepgraph=True
-                inl1 = allblocks[l-1].latentOutputs.latent[si]
-                inl1.requires_grad=True
-                model(x)
-                inl1.retain_grad()
-                outl = allblocks[l].latentOutputs.latent.pop(0)
-                outl.backward(latentgrad,inputs=(inl1,))
-                latentgrad = inl1.grad
-                del inl1
-                print("just computed grad",l-1,torch.norm(latentgrad),latentgrad.shape)
-                allblocks[l].keepgraph=False
-        allblocks[l].emptyLayer()
-
-    l=0
-    allblocks[l].loadLayer()
-    allblocks[l].saveOutputs(True) # reset the latents of this layer
-    with open("sentences.txt","r") as f:
-        for si,s in enumerate(f.readlines()):
-            prompt = toker(s)
-            tokids = prompt['input_ids']
-            if prefix>0: tokids = [0]*prefix+tokids
-            x = torch.LongTensor([tokids])
-            allblocks[l].keepgraph=True
-            inl1 = model.transformer.word_embeddings.latentOutputs.latent[si]
-            inl1.requires_grad=True
-            model(x)
-            inl1.retain_grad()
-            outl = allblocks[l].latentOutputs.latent.pop(0)
-            outl.backward(latentgrad,inputs=(inl1,))
-            latentgrad = inl1.grad
-            del inl1
-            print("just computed grad at the output of embeddings",torch.norm(latentgrad),latentgrad.shape)
+        for l in range(len(allblocks)):
+            allblocks[l].loadLayer()
+            allblocks[l].saveOutputs(True)
             allblocks[l].keepgraph=False
-        allblocks[l].emptyLayer()
+            out = model(x,use_cache=False)
+            allblocks[l].emptyLayer()
+            allblocks[l].saveOutputs(False)
 
-    loadEmbeddings(model) # also resets latentOutputs
-    with open("sentences.txt","r") as f:
-        for si,s in enumerate(f.readlines()):
-            prompt = toker(s)
-            tokids = prompt['input_ids']
-            if prefix>0: tokids = [0]*prefix+tokids
-            x = torch.LongTensor([tokids])
-            model.transformer.word_embeddings.prefv.requires_grad=True
-            model.transformer.word_embeddings.keepgraph=True
-            model(x)
-            model.transformer.word_embeddings.prefv.retain_grad()
-            outl = model.transformer.word_embeddings.latentOutputs.latent.pop(0)
-            outl.backward(latentgrad,inputs=(model.transformer.word_embeddings.prefv,))
-            latentgrad = model.transformer.word_embeddings.prefv.grad
-            print("just computed grad in the prefix",torch.norm(latentgrad),latentgrad.shape)
+        loadLMHead(model)
+        out = model(x,use_cache=False)
+        logits = out[0]
+        print("LOGITS",logits.shape)
+        newtok = torch.argmax(logits[0,-1]).detach()
+        print("NEWTOK",newtok)
+        x = torch.cat((x,newtok.view(1,1)),dim=1)
+        sout = toker.batch_decode(x, skip_special_tokens=True)
+        print("GENERATE",sout)
 
-def save_prefix():
-    torch.save(model.transformer.word_embeddings.prefv,"prefv.pt")
 
 def run_inference():
     tk = time.time()
@@ -461,7 +368,6 @@ toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.fro
 # allblocks = allblocks[0:2]
 
 t0 = time.time()
-train_soft_prompt()
-run_inference()
+generate("Le COVID est")
 t1 = time.time()
 print("total time required",t1-t0)
