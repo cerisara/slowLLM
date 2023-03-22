@@ -9,12 +9,13 @@ import gc
 from pathlib import Path
 from pynvml import *
 
+# put here the beginning of the sentence you want to generate
+debutt = "Le 49-3 a été utilisé pour la dernière fois par le gouvernement en"
+# total time = 223s to generate 50 new words, so 5s/word
+nb_new_words = 50
+
 # Put here the directory where you downloaded the Bloom's parameters
-wd = "/home/xtof/nas1/TALC/Synalp/Models/bloom/bloom/"
 wd = "/media/xtof/556E99561C655FA8/bloomz/"
-wd = "/mnt/dos/xtof/"
-wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
-wd = "/home/xtof/models/bloomz/"
 # this version of Bloom on JZ does not assign one layer to one file ! So I use my own version next:
 wd = "/gpfsdswork/dataset/HuggingFace_Models/bigscience/bloom/"
 wd = "/gpfswork/rech/knb/uyr14tk/home/bloom/model176b/"
@@ -315,8 +316,7 @@ def loadLMHead(model):
     print("LMhead loaded","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
 def inference_soft_prompt():
-    s = "Le COVID est"
-    run_forward_oneutt(s)
+    run_forward_oneutt(debutt)
 
 def run_forward_oneutt(utt):
     model.transformer.word_embeddings.passthru = False
@@ -329,15 +329,12 @@ def run_forward_oneutt(utt):
     prompt = toker(utt)
     tokids = prompt['input_ids']
     if prefix>0: tokids = [0]*prefix+tokids
-    generate_kwargs = dict(max_new_tokens=50, do_sample=False)
+    generate_kwargs = dict(max_new_tokens=nb_new_words, do_sample=False, use_cache=False)
     x = torch.LongTensor([tokids])
     outputs = model.generate(x, **generate_kwargs)
     sout = toker.batch_decode(outputs, skip_special_tokens=True)
     print("GENERATE",sout)
     print_usage_gpu()
-
-    outl1 = allblocks[-1].latentOutputs.latent[0]
-    print("last activ checkpoint",outl1.device,torch.norm(outl1).item())
 
 def save_prefix():
     torch.save(model.transformer.word_embeddings.prefv,"prefv.pt")
