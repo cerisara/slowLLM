@@ -29,10 +29,9 @@ and a given model.
 - download the Bloom-176b weights [from Huggingface Hub](https://huggingface.co/bigscience/bloom). You may also reuse or adapt the script downloadBloomz.sh available in this repo in code/ for linux.
 - download or clone this github repo
 - install in a conda/pip environment: pytorch + transformers + accelerate + datasets + promptsource
-- write in the text file code/sentences.txt one sentence per line
-- cd code; python slowLLM.py
+- write in the text file code/sentences.txt one sentence per line. Then "cd code; python slowLLM.py".
     - by default, this code makes a forward pass on every sentence in "sentences.txt", but there are a few other scripts, e.g., to evalute Bloomz on the BoolQ dataset.
-
+- Alternatively, you can do slow text generation with "code/slowBloom_generate.py": just write at the start of the source code the generation parameters you want before running the script.
 
 
 ## Limitations
