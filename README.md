@@ -3,10 +3,9 @@
 Using Large Language Models (starting with Bloom-176b and Bloomz-176b) slowly, but on commodity GPU-free personal computer.
 
 There are 3 different pieces of code in this repo:
-- The main code (in code/) loads Bloom's layers one by one to perform inference on CPU-only 16GB-RAM personal computer
-There is also a development branch for training (requires for now 25GB of RAM and roughly doubles the time of inference).
+- The main code (in code/) loads Bloom's layers one by one to perform either inference or soft-prompt tuning on CPU-only 16GB-RAM (25GB for soft prompt tuning) personal computer
 - Another version of this code is an adaptation of [Arteaga's blog](https://nbviewer.org/urls/arteagac.github.io/blog/bloom_local.ipynb) that fixes some bugs with the latest version of transformers.
-- Another code exploits collaborative inference, where each node hosts a few layers and communication is achieved through web sockets.
+- Another code (in alpha stage) exploits collaborative inference, where each node hosts a few layers and communication is achieved through web sockets.
 
 I compared my main code (for local inference with Bloom on CPU and 16GB RAM) with both alternatives (see at the end): the accelerate library and
 Arteaga's code, and this main code is the only one that achieves inference in less than 15' on my personal computer.
@@ -16,7 +15,7 @@ The principle is very simple: load the layers in RAM one by one, and process all
 then pass the activation to the next layer, and so on until the top layer and next word prediction.
 Training may then proceed by going backward through the same process.
 A similar behaviour may be obtained with [offloading and the accelerate library](https://huggingface.co/docs/accelerate/usage_guides/big_modeling),
-but my code is more specialized as it has been designed from the ground up for this specific use case
+but this code is more specialized as it has been designed from the ground up for this specific use case
 and a given model.
 
 ## Requirements
@@ -34,17 +33,18 @@ and a given model.
 - cd code; python slowLLM.py
     - by default, this code makes a forward pass on every sentence in "sentences.txt", but there are a few other scripts, e.g., to evalute Bloomz on the BoolQ dataset.
 
+
+
 ## Limitations
 
-- **This version does not really support real text generation**, which is too slow with autoregressive models;
-may be in the future with text diffusion models, but not now.
-- So it is limited for now to compute likelihood and generate 1, 2 or a few tokens maximum, such as for answering yes/no questions: many tasks can be framed as yes/no questions,
+- The script code/slowBloom_generate.py enables to perform text generation, but very slowly, so I do not recomment to use this approach for serious text generation.
+- It is better to use it to compute likelihood and generate 1, 2 or a few tokens maximum, such as for answering yes/no questions: many tasks can be framed as yes/no questions,
 but this may require some creative thinking.
 - Pipeline parallelism is limited to about 50 input sentences maximum, if you want to stay within 16GB of RAM
 
 ## Detailed speed and requirements
 
-- RAM: 16GB 
+- RAM: 16GB or 25GB for training
 
 The speed you may get greatly depends on your hardware.
 For instance, on a very very slow network drive, I got:
@@ -60,8 +60,6 @@ For instance, the forward pass on a single sentence (13 tokens) with slowLLM, us
 
 - The current approach to save every layer output to disk does not scale beyond 50 examples; a better usage of
 the RAM should be realized to process more examples.
-- Adapt the code to perform prompt tuning; this is rather straightforward.
-- Although it'd be extremely slow, nothing prevent this approach to perform generation; this option shall be at least enabled.
 
 ## Benchmarks
 
@@ -77,4 +75,13 @@ as well as 24GB of RAM: accelerate is exploiting the additional RAM, while slowL
 - code derived from Arteaga's blog: this code achieves the same process than mine, but reimplements the forward pass while I'm hacking into the Bloom module. The advantage of hacking into the Bloom module is that I can still benefit from the advanced functionalities empowering the transformers library, such as beam-search generation.
 	- total time = 4200s (because by reimplementing the forward pass, a single CPU core is working at a time)
 
+## Technical approach
+
+The approach implemented is pipeline parallelism with gradient checkpointing for inference,
+and naive model parallelism with gradient checkpointing for training.
+In addition, several tricks are implemented to save memory, such as
+back-and-forth conversion between bf16 and fp32 of the largest matrices when appropriate,
+freeing most activations and computation graphs except within a single layer,
+recomputing the graph from activation checkpoints,
+freeing most gradients as soon as possible...
 

@@ -1,3 +1,22 @@
+"""
+This code performs text generation with Bloom-176b on a commodity hardware (no gpu, 16GB of RAM)
+but slowly (600s per token generated with an old cpu and a 1.5GB/s hard drive).
+
+To use it, download the Bloomz model and set the 3 constants below:
+- beginning of the sentence you want to generate
+- number of new tokens you want to generate
+- directory where you have downloaded the Bloomz weights
+"""
+
+debutt = "Le 49-3 a été utilisé pour la dernière fois par le gouvernement en"
+nb_new_words = 10
+wd = "/media/xtof/nvme/bloomz/"
+
+
+
+############################################################
+# do not modify below
+
 import time
 import resource
 import transformers
@@ -8,13 +27,13 @@ import torch
 import gc
 from pathlib import Path
 
-# Put here the directory where you downloaded the Bloom's parameters
-wd = "/home/xtof/nas1/TALC/Synalp/Models/bloom/bloom/"
-wd = "/media/xtof/556E99561C655FA8/bloomz/"
-wd = "/mnt/dos/xtof/"
-wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
-wd = "/media/xtof/nvme/bloomz/"
 
+# wd = "/home/xtof/nas1/TALC/Synalp/Models/bloom/bloom/"
+# wd = "/media/xtof/556E99561C655FA8/bloomz/"
+# wd = "/mnt/dos/xtof/"
+# wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
+
+# prefix is the nb of vectors when you have trained a soft prompt: it is not yet fully supported
 prefix = 0
 
 # note: matmul btw 57344x14336 takes 0.62s in fp32 but 3.52s in bf16 !
@@ -303,14 +322,14 @@ def loadLMHead(model):
     print("LMhead loaded","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
 
-def generate(debutt):
+def generate(deb0):
     loadEmbeddings(model)
-    prompt = toker(debutt)
+    prompt = toker(deb0)
     tokids = prompt['input_ids']
     if prefix>0: tokids = [0]*prefix+tokids
     x = torch.LongTensor([tokids])
 
-    for ntoks in range(2):
+    for ntoks in range(nb_new_words):
         for l in range(len(allblocks)): allblocks[l].latentOutputs = None
         model.transformer.word_embeddings.latentOutputs = LatentOutputs()
         print("X",x.shape)
@@ -368,6 +387,6 @@ toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.fro
 # allblocks = allblocks[0:2]
 
 t0 = time.time()
-generate("Le COVID est")
+generate(debutt)
 t1 = time.time()
 print("total time required",t1-t0)
