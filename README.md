@@ -3,7 +3,7 @@
 Using Large Language Models (starting with Bloom-176b and Bloomz-176b) slowly, but on commodity GPU-free personal computer.
 
 There are 3 different pieces of code in this repo:
-- The main code (in code/) loads Bloom's layers one by one to perform either inference or soft-prompt tuning on CPU-only 16GB-RAM (25GB for soft prompt tuning) personal computer
+- The main code (in code/) loads Bloom's layers one by one to perform either inference or soft-prompt tuning on CPU-only 16GB-RAM (25GB for soft prompt tuning) personal computer. With an average-quality CPU and NVMe hard drive, this requires about 5s per layer to load the weights + 2s of compute per input, so in total 2x70x(5+2n)+70x2n=700+420n seconds for a full forward-backward pass, where n is the number of few-shots inputs to train on. E.g., for 10 few-shots, this requires 1h20.
 - Another version of this code is an adaptation of [Arteaga's blog](https://nbviewer.org/urls/arteagac.github.io/blog/bloom_local.ipynb) that fixes some bugs with the latest version of transformers.
 - Another code (in alpha stage) exploits collaborative inference, where each node hosts a few layers and communication is achieved through web sockets.
 
