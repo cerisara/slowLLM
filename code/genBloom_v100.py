@@ -373,36 +373,40 @@ model = initModel()
 loadLMHead(model)
 
 i=0
-for j in range(9):
+for j in range(6):
     allblocks[i].loadLayer("cuda:0")
     i+=1
 allblocks[i-1].nextBlockDev="cuda:1"
-for j in range(9):
+for j in range(6):
     allblocks[i].loadLayer("cuda:1")
     i+=1
 allblocks[i-1].nextBlockDev="cuda:2"
-for j in range(9):
+for j in range(6):
     allblocks[i].loadLayer("cuda:2")
     i+=1
 allblocks[i-1].nextBlockDev="cuda:3"
-for j in range(9):
+for j in range(6):
     allblocks[i].loadLayer("cuda:3")
     i+=1
 allblocks[i-1].nextBlockDev="cuda:4"
-for j in range(9):
+for j in range(6):
     allblocks[i].loadLayer("cuda:4")
     i+=1
 allblocks[i-1].nextBlockDev="cuda:5"
-for j in range(9):
+for j in range(6):
     allblocks[i].loadLayer("cuda:5")
     i+=1
 allblocks[i-1].nextBlockDev="cuda:6"
-for j in range(9):
+for j in range(6):
     allblocks[i].loadLayer("cuda:6")
     i+=1
 allblocks[i-1].nextBlockDev="cuda:7"
-while i<70:
+for j in range(6):
     allblocks[i].loadLayer("cuda:7")
+    i+=1
+allblocks[i-1].nextBlockDev="cpu"
+while i<70:
+    allblocks[i].loadLayer("cpu")
     i+=1
 
 print_usage_gpu()
