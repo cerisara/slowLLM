@@ -337,8 +337,7 @@ def run_forward():
         allblocks[l].saveOutputs(False)
 
     # prepare backward: if we only want forward, we shouldn't set requires_grad here
-    outl1 = allblocks[-1].latentOutputs.latent[0]
-    outl1.requires_grad=True
+    for vout in allblocks[-1].latentOutputs.latent: vout.requires_grad=True
 
     loadLMHead(model)
     losses = []
@@ -356,14 +355,15 @@ def run_forward():
     return losses
 
 def run_backward(losses):
-    # TODO: fix for multiple sentences
-    outl1 = allblocks[-1].latentOutputs.latent.pop(0)
-    outl1.retain_grad()
-    loss = losses[0]
-    loss.backward()
-    latentgrad=outl1.grad
-    del outl1
-    print("just computed grad at the output of layer",len(allblocks)-1,torch.norm(latentgrad),latentgrad.shape)
+    latentgrad = []
+    for i in range(len(allblocks[-1].latentOutputs.latent)):
+        outl1 = allblocks[-1].latentOutputs.latent.pop(0)
+        outl1.retain_grad()
+        loss = losses[i]
+        loss.backward()
+        latentgrad.append(outl1.grad)
+        del outl1
+        print("just computed grad at the output of layer",len(allblocks)-1,torch.norm(latentgrad[i]),latentgrad[i].shape)
 
     model.transformer.word_embeddings.emptyLayer()
     model.lm_head.emptyLayer()
@@ -382,10 +382,10 @@ def run_backward(losses):
                 model(x)
                 inl1.retain_grad()
                 outl = allblocks[l].latentOutputs.latent.pop(0)
-                outl.backward(latentgrad,inputs=(inl1,))
-                latentgrad = inl1.grad
+                outl.backward(latentgrad[si],inputs=(inl1,))
+                latentgrad[si] = inl1.grad
                 del inl1
-                print("just computed grad",l-1,torch.norm(latentgrad),latentgrad.shape)
+                print("just computed grad",l-1,si,torch.norm(latentgrad[si]),latentgrad[si].shape)
                 allblocks[l].keepgraph=False
         allblocks[l].emptyLayer()
 
@@ -404,10 +404,10 @@ def run_backward(losses):
             model(x)
             inl1.retain_grad()
             outl = allblocks[l].latentOutputs.latent.pop(0)
-            outl.backward(latentgrad,inputs=(inl1,))
-            latentgrad = inl1.grad
+            outl.backward(latentgrad[si],inputs=(inl1,))
+            latentgrad[si] = inl1.grad
             del inl1
-            print("just computed grad at the output of embeddings",torch.norm(latentgrad),latentgrad.shape)
+            print("just computed grad at the output of embeddings",torch.norm(latentgrad[si]),latentgrad[si].shape)
             allblocks[l].keepgraph=False
         allblocks[l].emptyLayer()
 
@@ -423,9 +423,9 @@ def run_backward(losses):
             model(x)
             model.transformer.word_embeddings.prefv.retain_grad()
             outl = model.transformer.word_embeddings.latentOutputs.latent.pop(0)
-            outl.backward(latentgrad,inputs=(model.transformer.word_embeddings.prefv,))
-            latentgrad = model.transformer.word_embeddings.prefv.grad
-            print("just computed grad in the prefix",torch.norm(latentgrad),latentgrad.shape)
+            outl.backward(latentgrad[si],inputs=(model.transformer.word_embeddings.prefv,))
+            latentgrad[si] = model.transformer.word_embeddings.prefv.grad
+            print("just computed grad in the prefix",torch.norm(latentgrad[si]),latentgrad[si].shape)
 
 def save_prefix():
     torch.save(model.transformer.word_embeddings.prefv,"prefv.pt")
