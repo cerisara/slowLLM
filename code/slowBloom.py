@@ -16,6 +16,7 @@ wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
 wd = "/media/xtof/nvme/bloomz/"
 
 prefix = 1
+nepochs = 10
 
 # note: matmul btw 57344x14336 takes 0.62s in fp32 but 3.52s in bf16 !
 # pour pouvoir stocker les + gros poids en bf16, l'idee est de convertir en fp32 juste avant
@@ -308,15 +309,25 @@ def showLatents():
         if allblocks[l].latentOutputs != None:
             print("LAT",l,allblocks[l].latentOutputs.tostr())
 
+def getInputs():
+    with open("sentences.txt","r") as f: lines = f.readlines()
+    utts,s = [],""
+    for l in lines:
+        if l[0]=='\n' and len(s)>0:
+            utts.append(s)
+            s=""
+        else: s+=l
+    if len(s)>0: utts.append(s)
+    return utts
+
 def run_forward():
     loadEmbeddings(model)
-    with open("sentences.txt","r") as f:
-        for l in f.readlines():
-            prompt = toker(l)
-            tokids = prompt['input_ids']
-            if prefix>0: tokids = [0]*prefix+tokids
-            x = torch.LongTensor([tokids])
-            out = model(x)
+    for s in getInputs():
+        prompt = toker(s)
+        tokids = prompt['input_ids']
+        if prefix>0: tokids = [0]*prefix+tokids
+        x = torch.LongTensor([tokids])
+        out = model(x)
     # showLatents()
     model.transformer.word_embeddings.emptyLayer()
     model.lm_head.emptyLayer()
@@ -324,14 +335,13 @@ def run_forward():
     for l in range(len(allblocks)):
         allblocks[l].loadLayer()
         allblocks[l].saveOutputs(True)
-        with open("sentences.txt","r") as f:
-            for s in f.readlines():
-                prompt = toker(s)
-                tokids = prompt['input_ids']
-                if prefix>0: tokids = [0]*prefix+tokids
-                x = torch.LongTensor([tokids])
-                allblocks[l].keepgraph=False
-                out = model(x)
+        for s in getInputs():
+            prompt = toker(s)
+            tokids = prompt['input_ids']
+            if prefix>0: tokids = [0]*prefix+tokids
+            x = torch.LongTensor([tokids])
+            allblocks[l].keepgraph=False
+            out = model(x)
         # showLatents()
         allblocks[l].emptyLayer()
         allblocks[l].saveOutputs(False)
@@ -341,17 +351,16 @@ def run_forward():
 
     loadLMHead(model)
     losses = []
-    with open("sentences.txt","r") as f:
-        for ui,s in enumerate(f.readlines()):
-            prompt = toker(s)
-            tokids = prompt['input_ids']
-            if prefix>0: tokids = [0]*prefix+tokids
-            x = torch.LongTensor([tokids])
-            labels = x.clone()
-            out = model(x,labels=labels)
-            losses.append(out.loss.view(-1))
-            print(ui,s)
-            print("LOSS",ui,out.loss.view(-1))
+    for ui,s in enumerate(getInputs()):
+        prompt = toker(s)
+        tokids = prompt['input_ids']
+        if prefix>0: tokids = [0]*prefix+tokids
+        x = torch.LongTensor([tokids])
+        labels = x.clone()
+        out = model(x,labels=labels)
+        losses.append(out.loss.view(-1))
+        print(ui,s)
+        print("LOSS",ui,out.loss.view(-1))
     return losses
 
 def run_backward(losses):
@@ -370,36 +379,13 @@ def run_backward(losses):
     for l in range(len(allblocks)-1,0,-1):
         allblocks[l].loadLayer()
         allblocks[l].saveOutputs(True) # reset the latents of this layer
-        with open("sentences.txt","r") as f:
-            for si,s in enumerate(f.readlines()):
-                prompt = toker(s)
-                tokids = prompt['input_ids']
-                if prefix>0: tokids = [0]*prefix+tokids
-                x = torch.LongTensor([tokids])
-                allblocks[l].keepgraph=True
-                inl1 = allblocks[l-1].latentOutputs.latent[si]
-                inl1.requires_grad=True
-                model(x)
-                inl1.retain_grad()
-                outl = allblocks[l].latentOutputs.latent.pop(0)
-                outl.backward(latentgrad[si],inputs=(inl1,))
-                latentgrad[si] = inl1.grad
-                del inl1
-                print("just computed grad",l-1,si,torch.norm(latentgrad[si]),latentgrad[si].shape)
-                allblocks[l].keepgraph=False
-        allblocks[l].emptyLayer()
-
-    l=0
-    allblocks[l].loadLayer()
-    allblocks[l].saveOutputs(True) # reset the latents of this layer
-    with open("sentences.txt","r") as f:
-        for si,s in enumerate(f.readlines()):
+        for si,s in enumerate(getInputs()):
             prompt = toker(s)
             tokids = prompt['input_ids']
             if prefix>0: tokids = [0]*prefix+tokids
             x = torch.LongTensor([tokids])
             allblocks[l].keepgraph=True
-            inl1 = model.transformer.word_embeddings.latentOutputs.latent[si]
+            inl1 = allblocks[l-1].latentOutputs.latent[si]
             inl1.requires_grad=True
             model(x)
             inl1.retain_grad()
@@ -407,25 +393,45 @@ def run_backward(losses):
             outl.backward(latentgrad[si],inputs=(inl1,))
             latentgrad[si] = inl1.grad
             del inl1
-            print("just computed grad at the output of embeddings",torch.norm(latentgrad[si]),latentgrad[si].shape)
+            print("just computed grad",l-1,si,torch.norm(latentgrad[si]),latentgrad[si].shape)
             allblocks[l].keepgraph=False
         allblocks[l].emptyLayer()
 
+    l=0
+    allblocks[l].loadLayer()
+    allblocks[l].saveOutputs(True) # reset the latents of this layer
+    for si,s in enumerate(getInputs()):
+        prompt = toker(s)
+        tokids = prompt['input_ids']
+        if prefix>0: tokids = [0]*prefix+tokids
+        x = torch.LongTensor([tokids])
+        allblocks[l].keepgraph=True
+        inl1 = model.transformer.word_embeddings.latentOutputs.latent[si]
+        inl1.requires_grad=True
+        model(x)
+        inl1.retain_grad()
+        outl = allblocks[l].latentOutputs.latent.pop(0)
+        outl.backward(latentgrad[si],inputs=(inl1,))
+        latentgrad[si] = inl1.grad
+        del inl1
+        print("just computed grad at the output of embeddings",torch.norm(latentgrad[si]),latentgrad[si].shape)
+        allblocks[l].keepgraph=False
+    allblocks[l].emptyLayer()
+
     loadEmbeddings(model) # also resets latentOutputs
-    with open("sentences.txt","r") as f:
-        for si,s in enumerate(f.readlines()):
-            prompt = toker(s)
-            tokids = prompt['input_ids']
-            if prefix>0: tokids = [0]*prefix+tokids
-            x = torch.LongTensor([tokids])
-            model.transformer.word_embeddings.prefv.requires_grad=True
-            model.transformer.word_embeddings.keepgraph=True
-            model(x)
-            model.transformer.word_embeddings.prefv.retain_grad()
-            outl = model.transformer.word_embeddings.latentOutputs.latent.pop(0)
-            outl.backward(latentgrad[si],inputs=(model.transformer.word_embeddings.prefv,))
-            latentgrad[si] = model.transformer.word_embeddings.prefv.grad
-            print("just computed grad in the prefix",torch.norm(latentgrad[si]),latentgrad[si].shape)
+    for si,s in enumerate(getInputs()):
+        prompt = toker(s)
+        tokids = prompt['input_ids']
+        if prefix>0: tokids = [0]*prefix+tokids
+        x = torch.LongTensor([tokids])
+        model.transformer.word_embeddings.prefv.requires_grad=True
+        model.transformer.word_embeddings.keepgraph=True
+        model(x)
+        model.transformer.word_embeddings.prefv.retain_grad()
+        outl = model.transformer.word_embeddings.latentOutputs.latent.pop(0)
+        outl.backward(latentgrad[si],inputs=(model.transformer.word_embeddings.prefv,))
+        latentgrad[si] = model.transformer.word_embeddings.prefv.grad
+        print("just computed grad in the prefix",torch.norm(latentgrad[si]),latentgrad[si].shape)
 
 def save_prefix():
     torch.save(model.transformer.word_embeddings.prefv,"prefv.pt")
@@ -437,7 +443,7 @@ def run_inference():
     print("time forward",tl-tk,losses)
 
 def train_soft_prompt():
-    print("train a soft prompt on sentences.txt (must contain a single sentence for now)")
+    print("train a soft prompt on sentences.txt")
     tk = time.time()
     losses = run_forward()
     tl = time.time()
@@ -461,7 +467,8 @@ toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.fro
 # allblocks = allblocks[0:2]
 
 t0 = time.time()
-train_soft_prompt()
-run_inference()
+for ep in range(nepochs):
+    train_soft_prompt()
+# run_inference()
 t1 = time.time()
 print("total time required",t1-t0)

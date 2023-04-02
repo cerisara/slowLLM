@@ -8,7 +8,7 @@ To use it, download the Bloomz model and set the 3 constants below:
 - directory where you have downloaded the Bloomz weights
 """
 
-debutt = "Le 49-3 a été utilisé pour la dernière fois par le gouvernement en"
+debutt = "Nous sommes le 23 mars 2023. Le 49-3 a été utilisé pour la dernière fois par le gouvernement il y a"
 nb_new_words = 10
 wd = "/media/xtof/nvme/bloomz/"
 

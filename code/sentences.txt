@@ -1,1 +1,18 @@
-La phrase suivante est en français: "the weather is nice"
+Question: Parmi les propositions suivantes. laquelle ou (lesquelles) est (sont) exacte(s) ? La chromatographie à polarité de phases inversée
+Choices:
+ (A) Utilise une phase stationnaire polaire
+ (B) Utilise une phase mobile hydro-organique
+ (C) Peut être appliquée aux espèces ionisées
+ (D) élue en premier les solutés les plus polaires
+ (E) Utilise une phase stationnaire en silice vierge
+Correct answers: B,C,D
+
+Question: A propos de l’infection à Hélicobacter pylori, quelle est la réponse exacte ?
+Choices:
+ (A) L’éradication de H. pylori peut être montrée en utilisant un test respiratoire non invasif contenant de l’urée marquée au 13C
+ (B) La clarithromycine ne peut pas être utilisée dans le traitement de cette infection
+ (C) H. pylori est retrouvé dans 30% des ulcères gastriques
+ (D) Il existe des différences cliniques majeures entre un ulcère de stress et une infection à H. pylori
+ (E) Les anti-acides employés au cours du traitement sont les dérivés de l’alginate
+Correct answers: A
+
