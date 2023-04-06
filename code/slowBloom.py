@@ -16,7 +16,8 @@ wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
 wd = "/media/xtof/nvme/bloomz/"
 
 prefix = 1
-nepochs = 10
+nepochs = 1
+LR = 0.5
 
 # note: matmul btw 57344x14336 takes 0.62s in fp32 but 3.52s in bf16 !
 # pour pouvoir stocker les + gros poids en bf16, l'idee est de convertir en fp32 juste avant
@@ -322,6 +323,7 @@ def getInputs():
 
 def run_forward():
     loadEmbeddings(model)
+    model.transformer.word_embeddings.keepgraph=False
     for s in getInputs():
         prompt = toker(s)
         tokids = prompt['input_ids']
@@ -375,6 +377,7 @@ def run_backward(losses):
         print("just computed grad at the output of layer",len(allblocks)-1,torch.norm(latentgrad[i]),latentgrad[i].shape)
 
     model.transformer.word_embeddings.emptyLayer()
+    model.transformer.word_embeddings.keepgraph=False
     model.lm_head.emptyLayer()
     for l in range(len(allblocks)-1,0,-1):
         allblocks[l].loadLayer()
@@ -432,9 +435,10 @@ def run_backward(losses):
         outl.backward(latentgrad[si],inputs=(model.transformer.word_embeddings.prefv,))
         latentgrad[si] = model.transformer.word_embeddings.prefv.grad
         print("just computed grad in the prefix",torch.norm(latentgrad[si]),latentgrad[si].shape)
+        save_prefix(si)
 
-def save_prefix():
-    torch.save(model.transformer.word_embeddings.prefv,"prefv.pt")
+def save_prefix(ep):
+    torch.save(model.transformer.word_embeddings.prefv,"prefv_"+str(ep)+".pt")
 
 def run_inference():
     tk = time.time()
@@ -442,7 +446,7 @@ def run_inference():
     tl = time.time()
     print("time forward",tl-tk,losses)
 
-def train_soft_prompt():
+def train_soft_prompt(ep=0):
     print("train a soft prompt on sentences.txt")
     tk = time.time()
     losses = run_forward()
@@ -452,10 +456,9 @@ def train_soft_prompt():
     tk = time.time()
     print("time backward",tk-tl)
     prefv0 = model.transformer.word_embeddings.prefv.clone()
-    opt = torch.optim.SGD([model.transformer.word_embeddings.prefv], lr=0.1)
+    opt = torch.optim.SGD([model.transformer.word_embeddings.prefv], lr=LR)
     opt.step()
     print("delta_prefix",torch.norm(model.transformer.word_embeddings.prefv-prefv0).item())
-    save_prefix()
 
 
 # ###################################
@@ -468,7 +471,7 @@ toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.fro
 
 t0 = time.time()
 for ep in range(nepochs):
-    train_soft_prompt()
+    train_soft_prompt(ep)
 # run_inference()
 t1 = time.time()
 print("total time required",t1-t0)
