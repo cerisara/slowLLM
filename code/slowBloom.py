@@ -7,6 +7,7 @@ from typing import Optional, Tuple, Union
 import torch
 import gc
 from pathlib import Path
+import random
 
 # Put here the directory where you downloaded the Bloom's parameters
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloom/bloom/"
@@ -15,9 +16,9 @@ wd = "/mnt/dos/xtof/"
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
 wd = "/media/xtof/nvme/bloomz/"
 
-prefix = 1
-nepochs = 1
-LR = 0.5
+prefix = 5
+niters = 100
+LR = 0.1
 
 # note: matmul btw 57344x14336 takes 0.62s in fp32 but 3.52s in bf16 !
 # pour pouvoir stocker les + gros poids en bf16, l'idee est de convertir en fp32 juste avant
@@ -310,16 +311,31 @@ def showLatents():
         if allblocks[l].latentOutputs != None:
             print("LAT",l,allblocks[l].latentOutputs.tostr())
 
+allutts = None
+numinput = 0
 def getInputs():
-    with open("sentences.txt","r") as f: lines = f.readlines()
-    utts,s = [],""
-    for l in lines:
-        if l[0]=='\n' and len(s)>0:
-            utts.append(s)
-            s=""
-        else: s+=l
-    if len(s)>0: utts.append(s)
-    return utts
+    global allutts
+    global numinput
+    if allutts==None:
+        with open("sentences.txt","r") as f: lines = f.readlines()
+        utts,s = [],""
+        for l in lines:
+            if l[0]=='\n' and len(s)>0:
+                utts.append(s)
+                s=""
+            else: s+=l
+        if len(s)>0: utts.append(s)
+        random.shuffle(utts)
+        allutts = utts
+    oneutt = allutts[numinput:numinput+1]
+    print("training utts:",oneutt)
+    return oneutt
+
+def nextInput():
+    global allutts
+    global numinput
+    numinput+=1
+    if numinput>len(allutts)-1: numinput=0
 
 def run_forward():
     loadEmbeddings(model)
@@ -365,7 +381,7 @@ def run_forward():
         print("LOSS",ui,out.loss.view(-1))
     return losses
 
-def run_backward(losses):
+def run_backward(losses,nit):
     latentgrad = []
     for i in range(len(allblocks[-1].latentOutputs.latent)):
         outl1 = allblocks[-1].latentOutputs.latent.pop(0)
@@ -435,10 +451,10 @@ def run_backward(losses):
         outl.backward(latentgrad[si],inputs=(model.transformer.word_embeddings.prefv,))
         latentgrad[si] = model.transformer.word_embeddings.prefv.grad
         print("just computed grad in the prefix",torch.norm(latentgrad[si]),latentgrad[si].shape)
-        save_prefix(si)
+        save_prefix(nit)
 
-def save_prefix(ep):
-    torch.save(model.transformer.word_embeddings.prefv,"prefv_"+str(ep)+".pt")
+def save_prefix(nit):
+    torch.save(model.transformer.word_embeddings.prefv,"prefv_"+str(nit)+".pt")
 
 def run_inference():
     tk = time.time()
@@ -446,13 +462,13 @@ def run_inference():
     tl = time.time()
     print("time forward",tl-tk,losses)
 
-def train_soft_prompt(ep=0):
+def train_soft_prompt(nit=0):
     print("train a soft prompt on sentences.txt")
     tk = time.time()
     losses = run_forward()
     tl = time.time()
     print("time forward",tl-tk,losses)
-    run_backward(losses)
+    run_backward(losses,nit)
     tk = time.time()
     print("time backward",tk-tl)
     prefv0 = model.transformer.word_embeddings.prefv.clone()
@@ -470,8 +486,9 @@ toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.fro
 # allblocks = allblocks[0:2]
 
 t0 = time.time()
-for ep in range(nepochs):
-    train_soft_prompt(ep)
+for nit in range(niters):
+    train_soft_prompt(nit)
+    nextInput()
 # run_inference()
 t1 = time.time()
 print("total time required",t1-t0)
