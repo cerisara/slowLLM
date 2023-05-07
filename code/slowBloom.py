@@ -16,9 +16,9 @@ wd = "/mnt/dos/xtof/"
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
 wd = "/media/xtof/nvme/bloomz/"
 
-prefix = 1
+prefix = 0
 niters = 100
-LR = 0.1
+LR = 0.9
 
 # note: matmul btw 57344x14336 takes 0.62s in fp32 but 3.52s in bf16 !
 # pour pouvoir stocker les + gros poids en bf16, l'idee est de convertir en fp32 juste avant
@@ -88,12 +88,13 @@ class MyLinear(torch.nn.Module):
 
     def forward(self, x):
         if self.isLoaded:
-            print("enter linear")
-            xx = x.squeeze()#.to(dtype=torch.bfloat16)
+            batch,ntime,vdim = x.shape
+            xx = x.view(batch*ntime,vdim)#.to(dtype=torch.bfloat16)
+            print("enter linear",xx.shape)
             # matmul in bf16 takes 12s for 3 tokens because it only uses 1 core, while it uses all cores in fp32
             # so I rather convert the matrix to fp32
             y = torch.matmul(xx,self.weight.T.to(dtype=torch.float32))
-            y = y.unsqueeze(0)
+            y = y.view(batch,ntime,-1)
             print("in linear",y.shape)
             return y#.to(torch.float32)
         # I dont know exactly the lexicon size, but I only query yes/no anyway so... TODO: fix that!
@@ -326,7 +327,7 @@ def showLatents():
 
 allutts = None
 numinput = 0
-def getInputs():
+def getInputsDEFT():
     global allutts
     global numinput
     if allutts==None:
@@ -343,6 +344,13 @@ def getInputs():
     oneutt = allutts[numinput:numinput+1]
     print("training utts:",oneutt)
     return oneutt
+
+def getInputsGeneration():
+    return allutts
+
+def getInputs():
+    # return getInputsDEFT()
+    return getInputsGeneration()
 
 def nextInput():
     global allutts
@@ -380,16 +388,18 @@ def run_forward():
 
     loadLMHead(model)
     losses = []
+    genToks = []
     for ui,s in enumerate(getInputs()):
         prompt = toker(s)
         tokids = prompt['input_ids']
         x = torch.LongTensor([tokids])
         labels = x.clone()
         out = model(x,labels=labels)
+        genToks.append(torch.argmax(out['logits']).item())
         losses.append(out.loss.view(-1))
         print(ui,s)
         print("LOSS",ui,out.loss.view(-1))
-    return losses
+    return losses, genToks
 
 def run_backward(losses,nit):
     latentgrad = []
@@ -446,14 +456,23 @@ def run_backward(losses,nit):
 
 def run_inference():
     tk = time.time()
-    losses = run_forward()
+    losses,_ = run_forward()
     tl = time.time()
     print("time forward",tl-tk,losses)
+
+def generate():
+    global allutts
+    s = "COVID"
+    for i in range(20):
+        allutts = [s]
+        losses, toks = run_forward()
+        s += " "+toker.batch_decode(toks, skip_special_tokens=True)[0]
+        print("GEN",i,s)
 
 def train_soft_prompt(nit=0):
     print("train a soft prompt on sentences.txt")
     tk = time.time()
-    losses = run_forward()
+    losses,_ = run_forward()
     tl = time.time()
     print("time forward",tl-tk,losses)
     run_backward(losses,nit)
@@ -475,9 +494,13 @@ toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.fro
 # allblocks = allblocks[0:2]
 
 t0 = time.time()
-for nit in range(niters):
-    train_soft_prompt(nit)
-    nextInput()
+# for nit in range(niters):
+#     train_soft_prompt(nit)
+#     nextInput()
+
 # run_inference()
+
+generate()
+
 t1 = time.time()
 print("total time required",t1-t0)
