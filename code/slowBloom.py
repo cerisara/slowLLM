@@ -16,7 +16,7 @@ wd = "/mnt/dos/xtof/"
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
 wd = "/media/xtof/nvme/bloomz/"
 
-prefix = 5
+prefix = 1
 niters = 100
 LR = 0.1
 
@@ -136,8 +136,8 @@ class MyEmbeddings(torch.nn.Embedding):
         super().__init__(1,1)
         self.dummy = torch.zeros((1,14336))
         self.isLoaded = False
+        # latentOutputs store only the embeddings of the current sentence, so that we can free all the other embeddings from RAM
         self.latentOutputs = None
-        if prefix>0: self.prefv = torch.nn.Parameter(torch.randn(prefix,14336).to(dtype=torch.bfloat16))
         self.keepgraph=False
 
     def setPoids(self,poids):
@@ -147,19 +147,15 @@ class MyEmbeddings(torch.nn.Embedding):
     def forward(self, x):
         if self.isLoaded:
             e=super().forward(x)
-            if prefix>0:
-                # tried first to append the prefix, but this creates issue when computing alibi
-                # e=torch.cat((self.prefv.expand(e.size(0),-1,-1),e),dim=1)
-                emask = torch.tensor([True]*prefix+[False]*(x.size(1)-prefix))
-                pref0 = torch.zeros(e.size(0),e.size(1)-prefix,e.size(2)).to(dtype=torch.bfloat16)
-                prefm = torch.cat((self.prefv.expand(e.size(0),-1,-1),pref0),dim=1)
-                e[:,emask,:] = prefm[:,emask,:]
-                print("pass in embeds prefv",self.prefv.requires_grad)
+            # in this version, the prefix is not prepended any more to the input sequence
+            # I assume we never need to finetune the embeddings, as we're only tuning the prefix (but the caller assumes we can finetune the embeddings, so I force here keepgraph=False)
+            self.keepgraph = False
             self.latentOutputs.store(e,keepgraph=self.keepgraph)
             e=e.to(dtype=torch.float32)
             return e
         elif self.latentOutputs != None:
             # in the second phase, we poll previously computed outputs to pass them to the first layer
+            # (when we're done with the current sentence, the latentOutputs are reset to None)
             e=self.latentOutputs.get()
             if e==None: return self.dummy.expand((x.size(0),14336))
             e=e.to(dtype=torch.float32)
@@ -187,7 +183,11 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         self.mlp.dense_h_to_4h = MyLinearAtt('h_4h',self.mlp.dense_h_to_4h)
         self.mlp.dense_4h_to_h = MyLinearAtt('4h_h',self.mlp.dense_4h_to_h)
 
-    def saveOutputs(self,b):
+        if prefix>0 and self.numLayer==0:
+            self.prefK = torch.nn.Parameter(torch.randn(prefix,14336).to(dtype=torch.bfloat16))
+            self.prefV = torch.nn.Parameter(torch.randn(prefix,14336).to(dtype=torch.bfloat16))
+
+    def activ_checkpointing(self,b):
         if b: self.latentOutputs = LatentOutputs()
         else: self.latentOutputs.dostore=False
 
@@ -242,7 +242,16 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         # print("layer input",torch.norm(hidden_states).item())
 
         t0 = time.time()
+
         if self.hasParms:
+            if self.numLayer==0 and prefix>0:
+                # transforming the input with the "pseudo-soft-prompt"
+                # TODO
+                print("prefix layer",hidden_states.shape,self.prefK.shape)
+                bsize,ntoks,vdim = hidden_states.shape
+                tmpp = self.prefK.view(1,vdim,1).expand(bsize,-1,1)
+                alpha = torch.matmul(hidden_states,tmpp)
+                # alpha = B x T x 1
             y0 = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache=False, output_attentions=False)
             if self.latentOutputs!=None: self.latentOutputs.store(y0[0],keepgraph=self.keepgraph)
             y = (y0[0], attention_mask)
@@ -352,7 +361,7 @@ def run_forward():
 
     for l in range(len(allblocks)):
         allblocks[l].loadLayer()
-        allblocks[l].saveOutputs(True)
+        allblocks[l].activ_checkpointing(True)
         for s in getInputs():
             prompt = toker(s)
             tokids = prompt['input_ids']
@@ -362,7 +371,7 @@ def run_forward():
             out = model(x)
         # showLatents()
         allblocks[l].emptyLayer()
-        allblocks[l].saveOutputs(False)
+        allblocks[l].activ_checkpointing(False)
 
     # prepare backward: if we only want forward, we shouldn't set requires_grad here
     for vout in allblocks[-1].latentOutputs.latent: vout.requires_grad=True
@@ -397,7 +406,7 @@ def run_backward(losses,nit):
     model.lm_head.emptyLayer()
     for l in range(len(allblocks)-1,0,-1):
         allblocks[l].loadLayer()
-        allblocks[l].saveOutputs(True) # reset the latents of this layer
+        allblocks[l].activ_checkpointing(True) # reset the latents of this layer
         for si,s in enumerate(getInputs()):
             prompt = toker(s)
             tokids = prompt['input_ids']
@@ -418,7 +427,7 @@ def run_backward(losses,nit):
 
     l=0
     allblocks[l].loadLayer()
-    allblocks[l].saveOutputs(True) # reset the latents of this layer
+    allblocks[l].activ_checkpointing(True) # reset the latents of this layer
     for si,s in enumerate(getInputs()):
         prompt = toker(s)
         tokids = prompt['input_ids']
