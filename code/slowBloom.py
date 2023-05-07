@@ -170,7 +170,6 @@ class MyEmbeddings(torch.nn.Embedding):
 class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
     def __init__(self, config):
         super().__init__(config)
-        self.memAllocated = False
         # there's one such block created per layer
         # when the first one is created, it'll be the only one with actual parameters
         global allblocks
@@ -179,12 +178,14 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         self.emptyParms = [p for p in self.parameters()]
         self.hasParms = False
         self.latentOutputs = None
+        # keep the largest matrices in bf16
         self.self_attention.query_key_value = MyLinearAtt('satt',self.self_attention.query_key_value)
         self.mlp.dense_h_to_4h = MyLinearAtt('h_4h',self.mlp.dense_h_to_4h)
         self.mlp.dense_4h_to_h = MyLinearAtt('4h_h',self.mlp.dense_4h_to_h)
 
         if prefix>0 and self.numLayer==0:
-            self.prefK = torch.nn.Parameter(torch.randn(prefix,14336).to(dtype=torch.bfloat16))
+            # +1 = ajoute un prefix avec V=0 qui permet de "desactiver" le prefix quand necessaire
+            self.prefK = torch.nn.Parameter(torch.randn(prefix+1,14336).to(dtype=torch.bfloat16))
             self.prefV = torch.nn.Parameter(torch.randn(prefix,14336).to(dtype=torch.bfloat16))
 
     def activ_checkpointing(self,b):
@@ -246,12 +247,16 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         if self.hasParms:
             if self.numLayer==0 and prefix>0:
                 # transforming the input with the "pseudo-soft-prompt"
-                # TODO
                 print("prefix layer",hidden_states.shape,self.prefK.shape)
                 bsize,ntoks,vdim = hidden_states.shape
-                tmpp = self.prefK.view(1,vdim,1).expand(bsize,-1,1)
+                tmpp = self.prefK.view(1,prefix+1,vdim).expand(bsize,prefix+1,vdim).transpose(1,2)
+                # (B x T x d) . (B x d x p) = (B x T x p)
                 alpha = torch.matmul(hidden_states,tmpp)
-                # alpha = B x T x 1
+                alpha = torch.softmax(alpha,dim=2) 
+                pV = torch.cat((torch.zeros(1,vdim),self.prefV)) # (p x d)
+                # (B x T x p) . (B x p x d) = (B x T x d)
+                wsum = torch.matmul(alpha,pV.view(1,prefix+1,vdim).expand(bsize,prefix+1,vdim))
+                hidden_states += wsum
             y0 = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache=False, output_attentions=False)
             if self.latentOutputs!=None: self.latentOutputs.store(y0[0],keepgraph=self.keepgraph)
             y = (y0[0], attention_mask)
