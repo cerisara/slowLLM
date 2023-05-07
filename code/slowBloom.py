@@ -77,6 +77,10 @@ pnames = (
         'mlp.dense_4h_to_h.bias',
         )
 
+# +1 = ajoute un prefix avec V=0 qui permet de "desactiver" le prefix quand necessaire
+prefK = torch.nn.Parameter(torch.randn(prefix+1,14336).to(dtype=torch.float32))
+prefV = torch.nn.Parameter(torch.randn(prefix,14336).to(dtype=torch.float32))
+
 class MyLinear(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -183,11 +187,6 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         self.mlp.dense_h_to_4h = MyLinearAtt('h_4h',self.mlp.dense_h_to_4h)
         self.mlp.dense_4h_to_h = MyLinearAtt('4h_h',self.mlp.dense_4h_to_h)
 
-        if prefix>0 and self.numLayer==0:
-            # +1 = ajoute un prefix avec V=0 qui permet de "desactiver" le prefix quand necessaire
-            self.prefK = torch.nn.Parameter(torch.randn(prefix+1,14336).to(dtype=torch.bfloat16))
-            self.prefV = torch.nn.Parameter(torch.randn(prefix,14336).to(dtype=torch.bfloat16))
-
     def activ_checkpointing(self,b):
         if b: self.latentOutputs = LatentOutputs()
         else: self.latentOutputs.dostore=False
@@ -247,16 +246,16 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         if self.hasParms:
             if self.numLayer==0 and prefix>0:
                 # transforming the input with the "pseudo-soft-prompt"
-                print("prefix layer",hidden_states.shape,self.prefK.shape)
+                print("prefix layer",hidden_states.shape,prefK.shape)
                 bsize,ntoks,vdim = hidden_states.shape
-                tmpp = self.prefK.view(1,prefix+1,vdim).expand(bsize,prefix+1,vdim).transpose(1,2)
+                tmpp = prefK.view(1,prefix+1,vdim).expand(bsize,prefix+1,vdim).transpose(1,2)
                 # (B x T x d) . (B x d x p) = (B x T x p)
                 alpha = torch.matmul(hidden_states,tmpp)
                 alpha = torch.softmax(alpha,dim=2) 
-                pV = torch.cat((torch.zeros(1,vdim),self.prefV)) # (p x d)
+                pV = torch.cat((torch.zeros(1,vdim),prefV)) # (p x d)
                 # (B x T x p) . (B x p x d) = (B x T x d)
                 wsum = torch.matmul(alpha,pV.view(1,prefix+1,vdim).expand(bsize,prefix+1,vdim))
-                hidden_states += wsum
+                hidden_states = hidden_states + wsum
             y0 = super().forward(hidden_states, alibi, attention_mask, layer_past, head_mask, use_cache=False, output_attentions=False)
             if self.latentOutputs!=None: self.latentOutputs.store(y0[0],keepgraph=self.keepgraph)
             y = (y0[0], attention_mask)
@@ -357,7 +356,6 @@ def run_forward():
     for s in getInputs():
         prompt = toker(s)
         tokids = prompt['input_ids']
-        if prefix>0: tokids = [0]*prefix+tokids
         x = torch.LongTensor([tokids])
         out = model(x)
     # showLatents()
@@ -370,7 +368,6 @@ def run_forward():
         for s in getInputs():
             prompt = toker(s)
             tokids = prompt['input_ids']
-            if prefix>0: tokids = [0]*prefix+tokids
             x = torch.LongTensor([tokids])
             allblocks[l].keepgraph=False
             out = model(x)
@@ -386,7 +383,6 @@ def run_forward():
     for ui,s in enumerate(getInputs()):
         prompt = toker(s)
         tokids = prompt['input_ids']
-        if prefix>0: tokids = [0]*prefix+tokids
         x = torch.LongTensor([tokids])
         labels = x.clone()
         out = model(x,labels=labels)
@@ -415,7 +411,6 @@ def run_backward(losses,nit):
         for si,s in enumerate(getInputs()):
             prompt = toker(s)
             tokids = prompt['input_ids']
-            if prefix>0: tokids = [0]*prefix+tokids
             x = torch.LongTensor([tokids])
             allblocks[l].keepgraph=True
             inl1 = allblocks[l-1].latentOutputs.latent[si]
@@ -436,39 +431,18 @@ def run_backward(losses,nit):
     for si,s in enumerate(getInputs()):
         prompt = toker(s)
         tokids = prompt['input_ids']
-        if prefix>0: tokids = [0]*prefix+tokids
         x = torch.LongTensor([tokids])
         allblocks[l].keepgraph=True
         inl1 = model.transformer.word_embeddings.latentOutputs.latent[si]
-        inl1.requires_grad=True
+        inl1.requires_grad=False
+        prefK.requires_grad,prefV.requires_grad=True,True
         model(x)
-        inl1.retain_grad()
         outl = allblocks[l].latentOutputs.latent.pop(0)
-        outl.backward(latentgrad[si],inputs=(inl1,))
-        latentgrad[si] = inl1.grad
+        outl.backward(latentgrad[si])
         del inl1
-        print("just computed grad at the output of embeddings",torch.norm(latentgrad[si]),latentgrad[si].shape)
+        print("just computed grad at the prefix",torch.norm(prefK),torch.norm(prefV))
         allblocks[l].keepgraph=False
     allblocks[l].emptyLayer()
-
-    loadEmbeddings(model) # also resets latentOutputs
-    for si,s in enumerate(getInputs()):
-        prompt = toker(s)
-        tokids = prompt['input_ids']
-        if prefix>0: tokids = [0]*prefix+tokids
-        x = torch.LongTensor([tokids])
-        model.transformer.word_embeddings.prefv.requires_grad=True
-        model.transformer.word_embeddings.keepgraph=True
-        model(x)
-        model.transformer.word_embeddings.prefv.retain_grad()
-        outl = model.transformer.word_embeddings.latentOutputs.latent.pop(0)
-        outl.backward(latentgrad[si],inputs=(model.transformer.word_embeddings.prefv,))
-        latentgrad[si] = model.transformer.word_embeddings.prefv.grad
-        print("just computed grad in the prefix",torch.norm(latentgrad[si]),latentgrad[si].shape)
-        save_prefix(nit)
-
-def save_prefix(nit):
-    torch.save(model.transformer.word_embeddings.prefv,"prefv_"+str(nit)+".pt")
 
 def run_inference():
     tk = time.time()
@@ -485,11 +459,12 @@ def train_soft_prompt(nit=0):
     run_backward(losses,nit)
     tk = time.time()
     print("time backward",tk-tl)
-    prefv0 = model.transformer.word_embeddings.prefv.clone()
-    opt = torch.optim.SGD([model.transformer.word_embeddings.prefv], lr=LR)
+    prefk0, prefv0 = prefK.clone(), prefV.clone()
+    opt = torch.optim.SGD([prefK,prefV], lr=LR)
     opt.step()
-    print("delta_prefix",torch.norm(model.transformer.word_embeddings.prefv-prefv0).item())
-
+    print("delta_prefix",torch.norm(prefK-prefk0).item(),torch.norm(prefV-prefv0))
+    torch.save(prefK,"prefK_"+str(nit)+".pt")
+    torch.save(prefV,"prefV_"+str(nit)+".pt")
 
 # ###################################
 
