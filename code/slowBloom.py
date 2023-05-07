@@ -27,15 +27,15 @@ LR = 0.1
 # les poids sont les suivants:
 # h.3.input_layernorm.weight torch.Size([14336])
 # h.3.input_layernorm.bias torch.Size([14336])
-# h.3.self_attention.query_key_value.weight torch.Size([43008, 14336]) ==> BIG
+# h.3.self_attention.query_key_value.weight torch.Size([43008, 14336]) ==> BIG 588M
 # h.3.self_attention.query_key_value.bias torch.Size([43008])
-# h.3.self_attention.dense.weight torch.Size([14336, 14336]) ==> BIG
+# h.3.self_attention.dense.weight torch.Size([14336, 14336]) ==> BIG 588M
 # h.3.self_attention.dense.bias torch.Size([14336])
 # h.3.post_attention_layernorm.weight torch.Size([14336])
 # h.3.post_attention_layernorm.bias torch.Size([14336])
-# h.3.mlp.dense_h_to_4h.weight torch.Size([57344, 14336]) ==> BIG
+# h.3.mlp.dense_h_to_4h.weight torch.Size([57344, 14336]) ==> BIG 784M
 # h.3.mlp.dense_h_to_4h.bias torch.Size([57344])
-# h.3.mlp.dense_4h_to_h.weight torch.Size([14336, 57344]) ==> BIG
+# h.3.mlp.dense_4h_to_h.weight torch.Size([14336, 57344]) ==> BIG 784M
 # h.3.mlp.dense_4h_to_h.bias torch.Size([14336])
 
 # this class wraps the Linear class of some weights in bf16 by converting them to fp32 first
