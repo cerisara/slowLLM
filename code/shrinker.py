@@ -316,13 +316,22 @@ def shrink():
         parms = torch.load(wd+"pytorch_model_"+f+"-of-00072.bin")
         for k in parms.keys():
             print("converting",k)
-            v = parms(k).to(dtype=torch.float32)
+            v = parms[k].to(dtype=torch.float32)
             if len(v.shape)==1:
-                y = torch.matmul(w,v)
-                y = y.to(torch.bfloat16)
-                parms[k] = y
+                if v.shape[0]>15000:
+                    vv = v.view(-1,14336)
+                    wparms = torch.matmul(vv,torch.t(w))
+                    wparms = wparms.to(torch.bfloat16)
+                    parms[k]=wparms.view(-1)
+                else:
+                    y = torch.matmul(w,v)
+                    y = y.to(torch.bfloat16)
+                    parms[k] = y
             elif len(v.shape)==2:
-                wparms = torch.matmul(v,torch.t(w))
+                if 'dense_4h_to_h.weight' in k:
+                    wparms = torch.matmul(torch.t(v),torch.t(w))
+                else:
+                    wparms = torch.matmul(v,torch.t(w))
                 wparms = wparms.to(torch.bfloat16)
                 parms[k]=wparms
             else: print("ERROR",k,v.shape)
