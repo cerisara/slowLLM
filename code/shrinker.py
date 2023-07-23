@@ -285,6 +285,7 @@ def shrink():
             k=np.random.randint(0,128-i)
             del dim2keep[k]
         for i in range(112): w[112*j+i,128*j+dim2keep[i]]=1
+    torch.save(w,wd2+"matdim.bin")
     # trop lent sur CPU, mieux vaut convertir tout en float32!
     # w = w.to(torch.bfloat16)
     # y = torch.matmul(w,x) to shrink
@@ -341,7 +342,7 @@ def shrink():
     parms = torch.load(wd+"pytorch_model_00072-of-00072.bin")
     for k in parms.keys():
         print("converting",k)
-        v = parms(k).to(dtype=torch.float32)
+        v = parms[k].to(dtype=torch.float32)
         if len(v.shape)==1:
             y = torch.matmul(w,v)
             y = y.to(torch.bfloat16)
