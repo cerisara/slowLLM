@@ -279,6 +279,7 @@ def initModel():
 
 def shrink():
     w = torch.zeros(112*112,112*128)
+    # w = 12544,14336
     for j in range(111,-1,-1):
         dim2keep = [i for i in range(128)]
         for i in range(16):
@@ -330,7 +331,17 @@ def shrink():
                     parms[k] = y
             elif len(v.shape)==2:
                 if 'dense_4h_to_h.weight' in k:
+                    # note: je garde le 4h initial, pourrait etre reduit ?
                     wparms = torch.matmul(torch.t(v),torch.t(w))
+                elif 'self_attention.query_key_value.weight' in k:
+                    vv = v.view(3,14336,14336)
+                    # 14336,14336 x 14336,12544 => 14336,12544
+                    wparms = torch.matmul(vv,torch.t(w))
+                    # 12544,14336 x 14336,12544 => 12544,12544
+                    wparms = torch.matmul(torch.transpose(wparms,2,1),torch.t(w))
+                    wparms = torch.transpose(wparms,2,1)
+                    wparms = wparms.to(torch.bfloat16)
+                    parms[k]=wparms.view(3,12544,12544)
                 else:
                     wparms = torch.matmul(v,torch.t(w))
                 wparms = wparms.to(torch.bfloat16)
