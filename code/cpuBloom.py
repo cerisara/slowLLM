@@ -1,4 +1,4 @@
-# code que j'ai ecris pour generer sur un seul GPU avec le gros Bloom
+# je reprends le code slowBloom et je le nettoie pour tourner sur CPU
 
 import time
 import resource
@@ -11,27 +11,61 @@ import gc
 from pathlib import Path
 from pynvml import *
 
-# put here the nb of new tokens you want to generate
-# total time = 223s to generate 50 new words, so 5s/word
-nb_new_words = 50
-
-# put in "sentences.txt" all your prompts, separating them with an empty line
-
 # Put here the directory where you downloaded the Bloom's parameters
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloom/bloom/"
 wd = "/media/xtof/556E99561C655FA8/bloomz/"
 wd = "/mnt/dos/xtof/"
-wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
 wd = "/home/xtof/models/bloomz/"
-# this version of Bloom on JZ does not assign one layer to one file ! So I use my own version next:
-wd = "/gpfsdswork/dataset/HuggingFace_Models/bigscience/bloom/"
-wd = "/gpfswork/rech/knb/uyr14tk/home/bloom/model176b/"
-wd = "/gpfsdswork/dataset/HuggingFace_Models/bigscience/bloomz/"
+wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
 
-print("running with model",wd)
+# note: matmul btw 57344x14336 takes 0.62s in fp32 but 3.52s in bf16 !
+# pour pouvoir stocker les + gros poids en bf16, l'idee est de convertir en fp32 juste avant
+# convert the largest matrix takes 0.6534 seconds and 822MB of RAM
 
-prefix = 0
-# TODO: load prefix
+# les poids sont les suivants:
+# h.3.input_layernorm.weight torch.Size([14336])
+# h.3.input_layernorm.bias torch.Size([14336])
+# h.3.self_attention.query_key_value.weight torch.Size([43008, 14336]) ==> BIG
+# h.3.self_attention.query_key_value.bias torch.Size([43008])
+# h.3.self_attention.dense.weight torch.Size([14336, 14336]) ==> BIG
+# h.3.self_attention.dense.bias torch.Size([14336])
+# h.3.post_attention_layernorm.weight torch.Size([14336])
+# h.3.post_attention_layernorm.bias torch.Size([14336])
+# h.3.mlp.dense_h_to_4h.weight torch.Size([57344, 14336]) ==> BIG
+# h.3.mlp.dense_h_to_4h.bias torch.Size([57344])
+# h.3.mlp.dense_4h_to_h.weight torch.Size([14336, 57344]) ==> BIG
+# h.3.mlp.dense_4h_to_h.bias torch.Size([14336])
+
+def _draw_graph(var, watch=[], seen=[], indent="", pobj=None):
+    from rich import print
+    if hasattr(var, "next_functions"):
+        for fun in var.next_functions:
+            joy = fun[0]
+            if joy is not None:
+                if joy not in seen:
+                    label = str(type(joy)).replace("class", "").replace("'", "").replace(" ", "")
+                    label_graph = label
+                    colour_graph = ""
+                    seen.append(joy)
+                    if hasattr(joy, 'variable'):
+                        happy = joy.variable
+                        if happy.is_leaf:
+                            label += " \U0001F343"
+                            colour_graph = "green"                            
+                            for (name, obj) in watch:
+                                if obj is happy:
+                                    label += " \U000023E9 " + "[b][u][color=#FF00FF]" + name + "[/color][/u][/b]"
+                                    label_graph += name                                    
+                                    colour_graph = "blue"
+                                    break                            
+                                vv = [str(obj.shape[x]) for x in range(len(obj.shape))]
+                            label += " [["
+                            label += ', '.join(vv)
+                            label += "]]"
+                            label += " " + str(happy.var())                    
+                    print(indent + label)
+                    _draw_graph(joy, watch, seen, indent + ".", joy)
+
 
 # this class wraps the Linear class of some weights in bf16 by converting them to fp32 first
 class MyLinearAtt(torch.nn.Module):
@@ -82,26 +116,20 @@ class MyLinear(torch.nn.Module):
 
     def forward(self, x):
         if self.isLoaded and not self.passthru:
-            # print("enter linear",x.storage().data_ptr(),x.requires_grad,x.device)
+            print("enter linear",x.storage().data_ptr(),x.requires_grad,x.device)
             xx = x.squeeze()#.to(dtype=torch.bfloat16)
             # matmul in bf16 takes 12s for 3 tokens because it only uses 1 core, while it uses all cores in fp32
             # so I rather convert the matrix to fp32
             y = torch.matmul(xx,self.weight.T.to(dtype=torch.float32))
             y = y.unsqueeze(0)
-            # print("in linear",y.shape)
+            print("in linear",y.shape)
             return y#.to(torch.float32)
         # I dont know exactly the lexicon size, but I only query yes/no anyway so... TODO: fix that!
-        # print("in linear pass thru")
+        print("in linear pass thru")
         return torch.zeros((1,250000))
  
     def emptyLayer(self):
         print("ERR called emptylayer")
-
-def print_usage_gpu():
-    nvmlInit()
-    handle = nvmlDeviceGetHandleByIndex(0)
-    info = nvmlDeviceGetMemoryInfo(handle)
-    print("GPU mem(MB)", info.used//1024**2)
 
 class LatentOutputs():
     # rather than saving all latent outputs (activations) to disk, which is slow, it's best to keep it in RAM
@@ -119,7 +147,7 @@ class LatentOutputs():
         if keepgraph:
             if z.is_leaf: z.requires_grad=True
             self.latent.append(z)
-            # print("storing",z.requires_grad,z.storage().data_ptr())
+            print("storing",z.requires_grad,z.storage().data_ptr())
         else: self.latent.append(z.detach())
 
     def get(self):
@@ -141,7 +169,6 @@ class MyEmbeddings(torch.nn.Embedding):
         self.dummy = torch.zeros((1,14336))
         self.isLoaded = False
         self.latentOutputs = None
-        if prefix>0: self.prefv = torch.nn.Parameter(torch.randn(prefix,14336).to(dtype=torch.bfloat16))
         self.keepgraph=False
         self.passthru = False
 
@@ -152,16 +179,7 @@ class MyEmbeddings(torch.nn.Embedding):
     def forward(self, x):
         if self.isLoaded and not self.passthru:
             e=super().forward(x)
-            if prefix>0:
-                # tried first to append the prefix, but this creates issue when computing alibi
-                # e=torch.cat((self.prefv.expand(e.size(0),-1,-1),e),dim=1)
-                emask = torch.tensor([True]*prefix+[False]*(x.size(1)-prefix))
-                pref0 = torch.zeros(e.size(0),e.size(1)-prefix,e.size(2)).to(dtype=torch.bfloat16)
-                prefm = torch.cat((self.prefv.expand(e.size(0),-1,-1),pref0),dim=1)
-                e[:,emask,:] = prefm[:,emask,:]
-                # print("pass in embeds prefv",self.prefv.requires_grad)
-            if self.latentOutputs!=None:
-                self.latentOutputs.store(e,keepgraph=self.keepgraph)
+            self.latentOutputs.store(e,keepgraph=self.keepgraph)
             e=e.to(dtype=torch.float32)
             return e
         elif self.latentOutputs != None:
@@ -215,7 +233,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         print("load weights from disk")
         self.dev = dev
         t0 = time.time()
-        # attention: les fichiers sur JZ ne sont pas comme chez moi: il faudrait utiliser le json!
+        # attention: les fichiers sur JZ ne sont pas comme chez moi: TODO il faudrait utiliser le json!
         f = "0000"+str(self.numLayer+2) if self.numLayer<8 else "000"+str(self.numLayer+2)
         print("loading",f)
         parms = torch.load(wd+"pytorch_model_"+f+"-of-00072.bin")
@@ -325,46 +343,86 @@ def loadLMHead(model):
     gc.collect()
     print("LMhead loaded","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
-def inference_soft_prompt():
-    s = "Question: Parmi les affirmations suivantes, une seule est fausse, indiquer laquelle: les particules alpha\n"+ "Choix:\n"+ " (A) Sont formées de noyaux d'hélium\n"+ " (B) Sont peu pénétrantes\n"+ " (C) Toute l'énergie qu'elles transportent est cédée au long d'un parcours de quelques centimètres dans l'air\n"+ " (D) Sont arrêtées par une feuille de papier\n"+ " (E) Sont peu ionisantes\n"+ "Réponse:"
-    print("IN INFERENCE")
-    with open("sentences.txt","r") as f:
-        lines = f.readlines()
-        i,s=0,""
-        while i<len(lines):
-            ll = lines[i]
-            if ll[0]=='\n':
-                if len(s)>0:
-                    print("GEN UTT",i)
-                    run_forward_oneutt(s)
-                    s=""
-            else:
-                if ll.startswith("Choix:"): ll="Choices:\n"
-                elif ll.startswith("Réponse:"): ll="Give the correct answers, and then explain why. Correct answers: "
-                s+=ll
-            i+=1
-        if len(s)>0:
-            print("GEN UTT",i)
-            run_forward_oneutt(s)
+
+def showLatents():
+    if model.transformer.word_embeddings.latentOutputs != None: print("LAT","EE", model.transformer.word_embeddings.latentOutputs.tostr())
+    for l in range(len(allblocks)):
+        if allblocks[l].latentOutputs != None:
+            print("LAT",l,allblocks[l].latentOutputs.tostr())
 
 def run_forward_oneutt(utt):
     model.transformer.word_embeddings.passthru = False
-    model.transformer.word_embeddings.latentOutputs = None
     model.lm_head.passthru = False
+    losses = []
     for l in range(len(allblocks)):
-        allblocks[l].latentOutputs = None
+        allblocks[l].latentOutputs = LatentOutputs()
         allblocks[l].passthru = False
-        allblocks[l].keepgraph=False
+    allblocks[-1].keepgraph=True
     prompt = toker(utt)
     tokids = prompt['input_ids']
-    if prefix>0: tokids = [0]*prefix+tokids
-    generate_kwargs = dict(max_new_tokens=nb_new_words, do_sample=False, use_cache=False)
     x = torch.LongTensor([tokids])
-    outputs = model.generate(x, **generate_kwargs)
-    sout = toker.batch_decode(outputs, skip_special_tokens=True)
-    print("GENERATE",sout)
-    print("FINGENERATE")
-    print_usage_gpu()
+    labels = x.clone()
+    out = model(x,labels=labels)
+    losses.append(out.loss.view(-1))
+    print("LOSS",out.loss.view(-1))
+    # showLatents()
+
+    # prepare backward: if we only want forward, we shouldn't set requires_grad here
+    outl1 = allblocks[-1].latentOutputs.latent[0]
+    outl1.requires_grad=True
+    print("last activ checkpoint",outl1.device,torch.norm(outl1).item())
+    return losses,x
+
+def run_backward(losses,x):
+    # faut-il detach x du graphe ?
+    # TODO: fix for multiple sentences
+    outl1 = allblocks[-1].latentOutputs.latent.pop(0)
+    print("latentnode",outl1.storage().data_ptr(),outl1.requires_grad)
+    outl1.retain_grad()
+    loss = losses[0]
+    loss.backward()
+    latentgrad=outl1.grad
+    print("latentgrad",latentgrad)
+    del outl1
+    print("just computed grad at the output of layer",len(allblocks)-1,torch.norm(latentgrad),latentgrad.shape)
+
+    model.transformer.word_embeddings.passthru = True
+    model.lm_head.passthru = True
+    for l in range(len(allblocks)-1,0,-1):
+        allblocks[l].latentOutputs = LatentOutputs()
+        for ll in range(len(allblocks)): allblocks[ll].passthru = True
+        allblocks[l].passthru = False
+        allblocks[l].keepgraph=True
+        inl1 = allblocks[l-1].latentOutputs.latent[0]
+        inl1.requires_grad=True
+        model(x)
+        inl1.retain_grad()
+        outl = allblocks[l].latentOutputs.latent.pop(0)
+        outl.backward(latentgrad,inputs=(inl1,))
+        latentgrad = inl1.grad
+        del inl1
+        print("just computed grad",l-1,torch.norm(latentgrad),latentgrad.shape)
+        allblocks[l].keepgraph=False
+
+    l=0
+    allblocks[l].latentOutputs = LatentOutputs()
+    for ll in range(len(allblocks)): allblocks[ll].passthru = True
+    allblocks[l].passthru = False
+    model.transformer.word_embeddings.passthru=False
+    model.transformer.word_embeddings.keepgraph=True
+    allblocks[l].keepgraph=True
+    inl1 = model.transformer.word_embeddings.prefv
+    inl1.requires_grad=True
+    model(x)
+    inl1.retain_grad()
+    outl = allblocks[l].latentOutputs.latent.pop(0)
+    outl.backward(latentgrad,inputs=(inl1,))
+    latentgrad = inl1.grad
+    print("just computed grad at the output of embeddings",torch.norm(latentgrad),latentgrad.shape)
+    latentgrad = model.transformer.word_embeddings.prefv.grad
+    model.transformer.word_embeddings.keepgraph=False
+    allblocks[l].keepgraph=False
+    del inl1
 
 def save_prefix():
     torch.save(model.transformer.word_embeddings.prefv,"prefv.pt")
@@ -374,44 +432,11 @@ def save_prefix():
 model = initModel()
 loadLMHead(model)
 
-i=0
-for j in range(9):
-    allblocks[i].loadLayer("cuda:0")
-    i+=1
-allblocks[i-1].nextBlockDev="cuda:1"
-for j in range(9):
-    allblocks[i].loadLayer("cuda:1")
-    i+=1
-allblocks[i-1].nextBlockDev="cuda:2"
-for j in range(9):
-    allblocks[i].loadLayer("cuda:2")
-    i+=1
-allblocks[i-1].nextBlockDev="cuda:3"
-for j in range(9):
-    allblocks[i].loadLayer("cuda:3")
-    i+=1
-allblocks[i-1].nextBlockDev="cuda:4"
-for j in range(9):
-    allblocks[i].loadLayer("cuda:4")
-    i+=1
-allblocks[i-1].nextBlockDev="cuda:5"
-for j in range(9):
-    allblocks[i].loadLayer("cuda:5")
-    i+=1
-allblocks[i-1].nextBlockDev="cuda:6"
-for j in range(9):
-    allblocks[i].loadLayer("cuda:6")
-    i+=1
-allblocks[i-1].nextBlockDev="cuda:7"
-while i<70:
-    allblocks[i].loadLayer("cuda:7")
-    i+=1
+allblocks[0].loadLayer()
+print("one layer loaded",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
-print_usage_gpu()
+# toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
 
-toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
+# debug
+# allblocks = allblocks[0:18]
 
-t0 = time.time()
-inference_soft_prompt()
-t1 = time.time()
-print("total time required",t1-t0)
