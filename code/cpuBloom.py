@@ -17,6 +17,7 @@ wd = "/media/xtof/556E99561C655FA8/bloomz/"
 wd = "/mnt/dos/xtof/"
 wd = "/home/xtof/models/bloomz/"
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
+wd = "/home/xtof/nvme/bloomz/"
 
 # note: matmul btw 57344x14336 takes 0.62s in fp32 but 3.52s in bf16 !
 # pour pouvoir stocker les + gros poids en bf16, l'idee est de convertir en fp32 juste avant
@@ -66,29 +67,6 @@ def _draw_graph(var, watch=[], seen=[], indent="", pobj=None):
                     print(indent + label)
                     _draw_graph(joy, watch, seen, indent + ".", joy)
 
-
-# this class wraps the Linear class of some weights in bf16 by converting them to fp32 first
-class MyLinearAtt(torch.nn.Module):
-    def __init__(self, nom, lin):
-        super().__init__()
-        self.nom = nom
-        self.lin = lin
-        self.weight = self.lin.weight.data
-        self.bias   = self.lin.bias.data
-        self.passthru = False
-
-    def forward(self,x):
-        if self.passthru: return x
-        x32 = x.to(dtype=torch.float32)
-        w32 = self.weight.data.to(dtype=torch.float32).t()
-        b32 = self.bias.data.to(dtype=torch.float32)
-        y = torch.matmul(x32,w32)
-        y = y+b32
-        # w32.requires_grad = True
-        # got 2 sets of parms: lin.* are meta + requires_grad
-        #                      weight,bias are allocated + does not require grad
-        return y
-
 # Do not modify below
 
 allblocks = []
@@ -108,6 +86,7 @@ pnames = (
         'mlp.dense_4h_to_h.bias',
         )
 
+# just for the last lm_head ??
 class MyLinear(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -205,9 +184,6 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         self.emptyParms = [p for p in self.parameters()]
         self.hasParms = False
         self.latentOutputs = None
-        self.self_attention.query_key_value = MyLinearAtt('satt',self.self_attention.query_key_value)
-        self.mlp.dense_h_to_4h = MyLinearAtt('h_4h',self.mlp.dense_h_to_4h)
-        self.mlp.dense_4h_to_h = MyLinearAtt('4h_h',self.mlp.dense_4h_to_h)
         self.passthru = False
         self.keepgraph = False
         self.nextBlockDev = None
@@ -238,11 +214,8 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         print("loading",f)
         parms = torch.load(wd+"pytorch_model_"+f+"-of-00072.bin")
         for i in range(len(pnames)):
-            if 'value.weight' in pnames[i] or 'h.weight' in pnames[i]: # or "dense.weight" in pnames[i]:
-                prebloc = parms['h.'+str(self.numLayer)+'.'+pnames[i]] # keep them in bf16 !
-            else:
-                prebloc = parms['h.'+str(self.numLayer)+'.'+pnames[i]].to(dtype=torch.float32)
-                del parms['h.'+str(self.numLayer)+'.'+pnames[i]]
+            prebloc = parms['h.'+str(self.numLayer)+'.'+pnames[i]].to(dtype=torch.float32)
+            del parms['h.'+str(self.numLayer)+'.'+pnames[i]]
             prebloc = prebloc.to(dev)
             prebloc = torch.nn.Parameter(prebloc,requires_grad=False)
             self.assignParms(pnames[i],prebloc)
@@ -427,15 +400,50 @@ def run_backward(losses,x):
 def save_prefix():
     torch.save(model.transformer.word_embeddings.prefv,"prefv.pt")
 
+class QtLinear(torch.nn.Linear):
+    def quantize(self):
+        # TODO
+        pass
+
+    def forward(self,x):
+        # OK, j'ai verifie que ces 2 lignes sont bien la meme chose:
+        # y= torch.nn.functional.linear(x, self.weight, self.bias)
+        y = self.bias + x @ self.weight.t()
+        print("detlinear",x.shape,y.norm())
+        return y
+
 # ###################################
 
 model = initModel()
 loadLMHead(model)
 
 allblocks[0].loadLayer()
+# indique la RAM en kB
 print("one layer loaded",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+for n,p in allblocks[0].named_parameters():
+    print(n,p.shape,p.device,p.dtype)
 
-# toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
+# just compute the output of layer 1
+model.transformer.word_embeddings.passthru = False
+model.lm_head.passthru = True
+allblocks[0].latentOutputs = LatentOutputs()
+allblocks[0].passthru = False
+allblocks[-1].keepgraph=False
+
+linear0 = allblocks[0].self_attention.query_key_value
+linear0.__class__ = QtLinear
+
+toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
+utt = "the time has come to apologize to Nature"
+prompt = toker(utt)
+tokids = prompt['input_ids']
+x = torch.LongTensor([tokids])
+out = model(x)
+print("LAT",allblocks[0].latentOutputs.tostr())
+
+print("press enter to finish")
+input()
+
 
 # debug
 # allblocks = allblocks[0:18]
