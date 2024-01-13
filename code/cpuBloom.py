@@ -403,6 +403,14 @@ def save_prefix():
 class QtLinear(torch.nn.Linear):
     def quantize(self):
         # TODO
+        # replace WX by softmax(Theta)VX during training
+        # and in the end by V[i]X; so replace 2S|W| by:
+        # if V in 4bits: 4*128+S|W|/2
+        # if V in 8bits: 4*256+S|W|
+        # where S = nb of Linear that shares the same V
+        # V = set of quantized values (|V|=2,4,8,16,...,128), shared across Linears? Layers?
+        # Theta = 1 theta per value; will be removed after training (0B)
+        # when S=1, we already gain a lot: 2|W| >> 4*128+|W|/2 so we can store a specific V per Linear
         pass
 
     def forward(self,x):
