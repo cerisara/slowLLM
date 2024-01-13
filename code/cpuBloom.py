@@ -10,6 +10,7 @@ import torch
 import gc
 from pathlib import Path
 from pynvml import *
+import torch.nn.functional as F
 
 # Put here the directory where you downloaded the Bloom's parameters
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloom/bloom/"
@@ -403,12 +404,32 @@ def save_prefix():
 class QtLinear(torch.nn.Linear):
     def quantize(self):
         # TODO
-        pass
+        # replace WX by softmax(Theta)VX during training
+        # and in the end by V[i]X; so replace 2S|W| by:
+        # if V in 4bits: 4*128+S|W|/2
+        # if V in 8bits: 4*256+S|W|
+        # where S = nb of Linear that shares the same V
+        # V = set of quantized values (|V|=2,4,8,16,...,128), shared across Linears? Layers?
+        # Theta = 1 theta per value; will be removed after training (0B)
+        # when S=1, we already gain a lot: 2|W| >> 4*128+|W|/2 so we can store a specific V per Linear
+        self.nbits = 4
+        # attention over quantized values
+        nrows,ncols = self.weight.shape
+        # on ne peut pas train tous ces parms, car il y en a bcp trop
+        self.register_parameter("vatt",torch.nn.Parameter(torch.Tensor(nrows,ncols,128)))
+        self.register_parameter("qvals",torch.nn.Parameter(torch.Tensor(128)))
+        # we don't need any more the old weights
+        self.weight=None
 
     def forward(self,x):
-        # OK, j'ai verifie que ces 2 lignes sont bien la meme chose:
-        # y= torch.nn.functional.linear(x, self.weight, self.bias)
-        y = self.bias + x @ self.weight.t()
+        if self.weight==None:
+            w = F.softmax(self.vatt, dim=2)
+            print(w.shape,self.qvals.shape)
+            w = w @ self.qvals 
+        else:
+            # OK, j'ai verifie que ces 2 lignes sont bien la meme chose:
+            # y= torch.nn.functional.linear(x, self.weight, self.bias)
+            y = self.bias + x @ self.weight.t()
         print("detlinear",x.shape,y.norm(),y.shape)
         return y
 
@@ -432,6 +453,7 @@ allblocks[-1].keepgraph=False
 
 linear0 = allblocks[0].self_attention.query_key_value
 linear0.__class__ = QtLinear
+linear0.quantize()
 
 toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
 utt = "the time has come to apologize to Nature"
