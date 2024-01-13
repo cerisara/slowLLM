@@ -409,7 +409,7 @@ class QtLinear(torch.nn.Linear):
         # OK, j'ai verifie que ces 2 lignes sont bien la meme chose:
         # y= torch.nn.functional.linear(x, self.weight, self.bias)
         y = self.bias + x @ self.weight.t()
-        print("detlinear",x.shape,y.norm())
+        print("detlinear",x.shape,y.norm(),y.shape)
         return y
 
 # ###################################
