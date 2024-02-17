@@ -454,6 +454,7 @@ def run_backward(model, losses,nit):
         torch.save(model.transformer.word_embeddings.prefv,"prefv_"+str(nit)+".pt")
 
 def wikitextPerplexity():
+    # perplexity of BloomZ here on Wikitext-2-raw test is 198, which is too high...
     from datasets import load_dataset
     dataset = load_dataset("wikitext",'wikitext-2-raw-v1')
     dataset = dataset['test']
