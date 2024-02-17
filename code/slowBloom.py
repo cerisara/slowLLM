@@ -374,8 +374,8 @@ def run_forward(model, toker, utts, prepare_backward=False):
         tokids = prompt['input_ids']
         if prefix>0: tokids = [0]*prefix+tokids
         x = torch.LongTensor([tokids])
-        x = x[0,:-1]
-        labels = x.clone()[0,1:]
+        # we can just clone the labels, they're shifted in the forward pass: https://github.com/seungeunrho/transformers/blob/988fab92806dc8db0b0218018ee5a582f4545193/src/transformers/models/bloom/modeling_bloom.py#L907
+        labels = x.clone()
         out = model(x,labels=labels)
         losses.append(out.loss.view(-1))
         print("LOSS",ui,out.loss.view(-1),s)
@@ -455,19 +455,20 @@ def run_backward(model, losses,nit):
 
 def wikitextPerplexity():
     from datasets import load_dataset
-    dataset = load_dataset("wikitext",'wikitext-2-v1')
-    dataset = dataset['validation']
+    dataset = load_dataset("wikitext",'wikitext-2-raw-v1')
+    dataset = dataset['test']
     utts = []
     for i in range(len(dataset)):
-        if len(utts)>=10: break
         s=dataset[i]['text'].strip()
         if len(s)>0: utts.append(s)
+    random.shuffle(utts)
     model = initModel()
     toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
     tk = time.time()
-    losses = run_forward(model, toker, utts)
+    losses = run_forward(model, toker, utts[0:20])
     tl = time.time()
-    print("time forward",tl-tk,losses)
+    ppl = torch.exp(torch.stack(losses).mean())
+    print("time forward PPL",tl-tk, ppl, losses)
 
 def train_soft_prompt(nit=0):
     model = initModel()
