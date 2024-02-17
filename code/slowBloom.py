@@ -14,7 +14,7 @@ wd = "/home/xtof/nas1/TALC/Synalp/Models/bloom/bloom/"
 wd = "/media/xtof/556E99561C655FA8/bloomz/"
 wd = "/mnt/dos/xtof/"
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
-wd = "/media/xtof/nvme/bloomz/"
+wd = "/home/xtof/nvme/bloomz/"
 
 prefix = 5
 niters = 100
@@ -305,7 +305,7 @@ def loadLMHead(model):
     print("LMhead loaded","RAM",resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
 
-def showLatents():
+def showLatents(model):
     if model.transformer.word_embeddings.latentOutputs != None: print("LAT","EE", model.transformer.word_embeddings.latentOutputs.tostr())
     for l in range(len(allblocks)):
         if allblocks[l].latentOutputs != None:
@@ -337,10 +337,10 @@ def nextInput():
     numinput+=1
     if numinput>len(allutts)-1: numinput=0
 
-def run_forward():
+def run_forward(model, toker, utts, prepare_backward=False):
     loadEmbeddings(model)
     model.transformer.word_embeddings.keepgraph=False
-    for s in getInputs():
+    for s in utts:
         prompt = toker(s)
         tokids = prompt['input_ids']
         if prefix>0: tokids = [0]*prefix+tokids
@@ -353,7 +353,7 @@ def run_forward():
     for l in range(len(allblocks)):
         allblocks[l].loadLayer()
         allblocks[l].saveOutputs(True)
-        for s in getInputs():
+        for s in utts:
             prompt = toker(s)
             tokids = prompt['input_ids']
             if prefix>0: tokids = [0]*prefix+tokids
@@ -364,24 +364,24 @@ def run_forward():
         allblocks[l].emptyLayer()
         allblocks[l].saveOutputs(False)
 
-    # prepare backward: if we only want forward, we shouldn't set requires_grad here
-    for vout in allblocks[-1].latentOutputs.latent: vout.requires_grad=True
+    if prepare_backward:
+        for vout in allblocks[-1].latentOutputs.latent: vout.requires_grad=True
 
     loadLMHead(model)
     losses = []
-    for ui,s in enumerate(getInputs()):
+    for ui,s in enumerate(utts):
         prompt = toker(s)
         tokids = prompt['input_ids']
         if prefix>0: tokids = [0]*prefix+tokids
         x = torch.LongTensor([tokids])
-        labels = x.clone()
+        x = x[0,:-1]
+        labels = x.clone()[0,1:]
         out = model(x,labels=labels)
         losses.append(out.loss.view(-1))
-        print(ui,s)
-        print("LOSS",ui,out.loss.view(-1))
+        print("LOSS",ui,out.loss.view(-1),s)
     return losses
 
-def run_backward(losses,nit):
+def run_backward(model, losses,nit):
     latentgrad = []
     for i in range(len(allblocks[-1].latentOutputs.latent)):
         outl1 = allblocks[-1].latentOutputs.latent.pop(0)
@@ -451,24 +451,33 @@ def run_backward(losses,nit):
         outl.backward(latentgrad[si],inputs=(model.transformer.word_embeddings.prefv,))
         latentgrad[si] = model.transformer.word_embeddings.prefv.grad
         print("just computed grad in the prefix",torch.norm(latentgrad[si]),latentgrad[si].shape)
-        save_prefix(nit)
+        torch.save(model.transformer.word_embeddings.prefv,"prefv_"+str(nit)+".pt")
 
-def save_prefix(nit):
-    torch.save(model.transformer.word_embeddings.prefv,"prefv_"+str(nit)+".pt")
-
-def run_inference():
+def wikitextPerplexity():
+    from datasets import load_dataset
+    dataset = load_dataset("wikitext",'wikitext-2-v1')
+    dataset = dataset['validation']
+    utts = []
+    for i in range(len(dataset)):
+        if len(utts)>=10: break
+        s=dataset[i]['text'].strip()
+        if len(s)>0: utts.append(s)
+    model = initModel()
+    toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
     tk = time.time()
-    losses = run_forward()
+    losses = run_forward(model, toker, utts)
     tl = time.time()
     print("time forward",tl-tk,losses)
 
 def train_soft_prompt(nit=0):
+    model = initModel()
+    toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
     print("train a soft prompt on sentences.txt")
     tk = time.time()
-    losses = run_forward()
+    losses = run_forward(model, toker, allutts)
     tl = time.time()
     print("time forward",tl-tk,losses)
-    run_backward(losses,nit)
+    run_backward(model, losses,nit)
     tk = time.time()
     print("time backward",tk-tl)
     prefv0 = model.transformer.word_embeddings.prefv.clone()
@@ -479,15 +488,17 @@ def train_soft_prompt(nit=0):
 
 # ###################################
 
-model = initModel()
-toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
+wikitextPerplexity()
+
+exit()
+
 
 # debug
 # allblocks = allblocks[0:2]
 
 t0 = time.time()
 for nit in range(niters):
-    train_soft_prompt(nit)
+    train_soft_prompt(model, nit)
     nextInput()
 # run_inference()
 t1 = time.time()
