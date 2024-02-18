@@ -544,7 +544,7 @@ def magnitude_pruning(b):
             metric = p.abs()
             _, sorted_idx = torch.sort(metric, dim=1)
             pruned_idx = sorted_idx[:,:int(p.shape[1] * s)]
-            p.scatter_(dim=1, index=pruned_idx, src=0)
+            p.scatter_(dim=1, index=pruned_idx, src=0.)
 
 # ###################################
 
