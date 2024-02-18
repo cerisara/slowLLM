@@ -537,14 +537,16 @@ def train_soft_prompt(nit=0):
 def magnitude_pruning(b):
     s = 0.1 # 10% sparsity
     print("pruning layer",b.numLayer,s)
-    for n,p in b.named_parameters():
-        if len(p.shape)==2:
-            print(n,p.shape)
-            # prune row-wise as suggested in Wanda paper
-            metric = p.abs()
-            _, sorted_idx = torch.sort(metric, dim=1)
-            pruned_idx = sorted_idx[:,:int(p.shape[1] * s)]
-            p.scatter_(dim=1, index=pruned_idx, value=0)
+    with torch.no_grad():
+        for n,p in b.named_parameters():
+            if len(p.shape)==2:
+                print(n,p.shape)
+                # prune row-wise as suggested in Wanda paper
+                metric = p.abs()
+                _, sorted_idx = torch.sort(metric, dim=1)
+                pruned_idx = sorted_idx[:,:int(p.shape[1] * s)]
+                print("dbug",p.requires_grad)
+                p.scatter_(dim=1, index=pruned_idx, value=0)
 
 # ###################################
 
