@@ -455,15 +455,28 @@ def run_backward(model, losses,nit):
 
 def wikitextPerplexity():
     # perplexity of BloomZ here on Wikitext-2-raw test is 198, which is too high...
+    # on C4 perplexity is about 38, still quite high...
+
+    # comparison with bloomz-7b on Jean Zay
+    # bloomz-7b = PPL(C4) = 27
+    # bloom-7b = PPL(C4) = 22
+    # mistral-7b = PPL(C4) = 12
+    # TODO: rather use bits-per-byte to compare across tokenizers!!
+
+    # mistral-7b PPL(Wikitext-all) = 26.6
+    # bloom-7b PPL(Wikitext-all) = 55 (plus 7 nan)
+    # bloomz-7b PPL(Wikitext-all) = 58.9 (plus 7 nan)
+
     utts = []
-    if False:
-        from datasets import load_dataset
-        dataset = load_dataset("wikitext",'wikitext-2-raw-v1')
-        dataset = dataset['test']
-        for i in range(len(dataset)):
-            s=dataset[i]['text'].strip()
-            if len(s)>0: utts.append(s)
-        random.shuffle(utts)
+    if True:
+        wikitextutts = [" = Robert Boulter =", "Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was performed in 2001 at the Royal Court Theatre . He had a guest role in the television series Judge John Deed in 2002 . In 2004 Boulter landed a role as \" Craig \" in the episode \" Teddy 's Story \" of the television series The Long Firm ; he starred alongside actors Mark Strong and Derek Jacobi . He was cast in the 2005 theatre productions of the Philip Ridley play Mercury Fur , which was performed at the Drum Theatre in Plymouth and the Menier Chocolate Factory in London . He was directed by John Tiffany and starred alongside Ben Whishaw , Shane Zaza , Harry Kent , Fraser Ayres , Sophie Stanton and Dominic Hall .", "In 2006 , Boulter starred alongside Whishaw in the play Citizenship written by Mark Ravenhill . He appeared on a 2006 episode of the television series , Doctors , followed by a role in the 2007 theatre production of How to Curse directed by Josie Rourke . How to Curse was performed at Bush Theatre in the London Borough of Hammersmith and Fulham . Boulter starred in two films in 2008 , Daylight Robbery by filmmaker Paris Leonti , and Donkey Punch directed by Olly Blackburn . In May 2008 , Boulter made a guest appearance on a two @-@ part episode arc of the television series Waking the Dead , followed by an appearance on the television series Survivors in November 2008 . He had a recurring role in ten episodes of the television series Casualty in 2010 , as \" Kieron Fletcher \" . Boulter starred in the 2011 film Mercenaries directed by Paris Leonti .", "= = Career = =", "= = = 2000 – 2005 = = =", "In 2000 Boulter had a guest @-@ starring role on the television series The Bill ; he portrayed \" Scott Parry \" in the episode , \" In Safe Hands \" . Boulter starred as \" Scott \" in the play Herons written by Simon Stephens , which was performed in 2001 at the Royal Court Theatre . A review of Boulter 's performance in The Independent on Sunday described him as \" horribly menacing \" in the role , and he received critical reviews in The Herald , and Evening Standard . He appeared in the television series Judge John Deed in 2002 as \" Addem Armitage \" in the episode \" Political Expediency \" , and had a role as a different character \" Toby Steele \" on The Bill .", "He had a recurring role in 2003 on two episodes of The Bill , as character \" Connor Price \" . In 2004 Boulter landed a role as \" Craig \" in the episode \" Teddy 's Story \" of the television series The Long Firm ; he starred alongside actors Mark Strong and Derek Jacobi . Boulter starred as \" Darren \" , in the 2005 theatre productions of the Philip Ridley play Mercury Fur . It was performed at the Drum Theatre in Plymouth , and the Menier Chocolate Factory in London . He was directed by John Tiffany and starred alongside Ben Whishaw , Shane Zaza , Harry Kent , Fraser Ayres , Sophie Stanton and Dominic Hall . Boulter received a favorable review in The Daily Telegraph : \" The acting is shatteringly intense , with wired performances from Ben Whishaw ( now unrecognisable from his performance as Trevor Nunn 's Hamlet ) , Robert Boulter , Shane Zaza and Fraser Ayres . \" The Guardian noted , \" Ben Whishaw and Robert Boulter offer tenderness amid the savagery . \"", "= = = 2006 – present = = =", "In 2006 Boulter starred in the play Citizenship written by Mark Ravenhill . The play was part of a series which featured different playwrights , titled Burn / Chatroom / Citizenship . In a 2006 interview , fellow actor Ben Whishaw identified Boulter as one of his favorite co @-@ stars : \" I loved working with a guy called Robert Boulter , who was in the triple bill of Burn , Chatroom and Citizenship at the National . He played my brother in Mercury Fur . \" He portrayed \" Jason Tyler \" on the 2006 episode of the television series , Doctors , titled \" Something I Ate \" . Boulter starred as \" William \" in the 2007 production of How to Curse directed by Josie Rourke . How to Curse was performed at Bush Theatre in the London Borough of Hammersmith and Fulham . In a review of the production for The Daily Telegraph , theatre critic Charles Spencer noted , \" Robert Boulter brings a touching vulnerability to the stage as William . \"", "Boulter starred in two films in 2008 , Daylight Robbery by filmmaker Paris Leonti , and Donkey Punch directed by Olly Blackburn . Boulter portrayed a character named \" Sean \" in Donkey Punch , who tags along with character \" Josh \" as the \" quiet brother ... who hits it off with Tammi \" . Boulter guest starred on a two @-@ part episode arc \" Wounds \" in May 2008 of the television series Waking the Dead as character \" Jimmy Dearden \" . He appeared on the television series Survivors as \" Neil \" in November 2008 . He had a recurring role in ten episodes of the television series Casualty in 2010 , as \" Kieron Fletcher \" . He portrayed an emergency physician applying for a medical fellowship . He commented on the inherent difficulties in portraying a physician on television : \" Playing a doctor is a strange experience . Pretending you know what you 're talking about when you don 't is very bizarre but there are advisers on set who are fantastic at taking you through procedures and giving you the confidence to stand there and look like you know what you 're doing . \" Boulter starred in the 2011 film Mercenaries directed by Paris Leonti ."]
+        # from datasets import load_dataset
+        # dataset = load_dataset("wikitext",'wikitext-2-raw-v1')
+        # dataset = dataset['test']
+        # for i in range(len(dataset)):
+        #     s=dataset[i]['text'].strip()
+        #     if len(s)>0: utts.append(s)
+        # random.shuffle(utts)
     else:
         # rather test on C4
         utts.append("Beginners BBQ Class Taking Place in Missoula! Do you want to get better at making delicious BBQ? You will have the opportunity, put this on your calendar now. Thursday, September 22nd join World Class BBQ Champion, Tony Balay from Lonestar Smoke Rangers. He will be teaching a beginner level class for everyone who wants to get better with their culinary skills. He will teach you everything you need to know to compete in a KCBS BBQ competition, including techniques, recipes, timelines, meat selection and trimming, plus smoker and fire information. The cost to be in the class is $35 per person, and for spectators it is free. Included in the cost will be either a t-shirt or apron and you will be tasting samples of each meat that is prepared.")
@@ -513,3 +526,4 @@ for nit in range(niters):
 # run_inference()
 t1 = time.time()
 print("total time required",t1-t0)
+
