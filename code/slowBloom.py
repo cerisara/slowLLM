@@ -18,7 +18,7 @@ wd = "/home/xtof/nvme/bloomz/"
 
 prefix = 5
 niters = 100
-LR = 0.1
+LR = 0.2
 
 # note: matmul btw 57344x14336 takes 0.62s in fp32 but 3.52s in bf16 !
 # pour pouvoir stocker les + gros poids en bf16, l'idee est de convertir en fp32 juste avant
@@ -484,16 +484,18 @@ def wikitextPerplexity(model):
 
     # et avec slow-Bloomz-176b: (certaines phrases sont tres mal predites, la plupart des autres bien mieux !)
     # !!! en fait, ce sont les phrases courtes, les "titres markdown", qui sont tres mal predites !
+    # 
+    # base      MP 10%
     # 785048
-    # 25.1058
-    # 16.1045
+    # 25.1058   24.1673
+    # 16.1045   15.6928
     # 237139
     # 36640.2
-    # 30.487
-    # 25.8084
+    # 30.487    29.2389
+    # 25.8084   25.3759
     # 27617.4
-    # 18.8705
-    # 19.5916
+    # 18.8705   18.6044
+    # 19.5916   19.2132
 
     utts = []
     if True:
