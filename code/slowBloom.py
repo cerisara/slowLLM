@@ -39,6 +39,7 @@ LR = 0.1
 # h.3.mlp.dense_4h_to_h.bias torch.Size([14336])
 
 # this class wraps the Linear class of some weights in bf16 by converting them to fp32 first
+# TODO: it keeps both matrices in RAM, could avoid that?
 class MyLinearAtt(torch.nn.Module):
     def __init__(self, nom, lin):
         super().__init__()
