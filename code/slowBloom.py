@@ -186,6 +186,7 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         self.self_attention.query_key_value = MyLinearAtt('satt',self.self_attention.query_key_value)
         self.mlp.dense_h_to_4h = MyLinearAtt('h_4h',self.mlp.dense_h_to_4h)
         self.mlp.dense_4h_to_h = MyLinearAtt('4h_h',self.mlp.dense_4h_to_h)
+        self.dopruning = False
 
     def saveOutputs(self,b):
         if b: self.latentOutputs = LatentOutputs()
@@ -352,6 +353,7 @@ def run_forward(model, toker, utts, prepare_backward=False):
 
     for l in range(len(allblocks)):
         allblocks[l].loadLayer()
+        if allblocks[l].dopruning: magnitude_pruning(allblocks[l])
         allblocks[l].saveOutputs(True)
         for s in utts:
             prompt = toker(s)
@@ -453,7 +455,7 @@ def run_backward(model, losses,nit):
         print("just computed grad in the prefix",torch.norm(latentgrad[si]),latentgrad[si].shape)
         torch.save(model.transformer.word_embeddings.prefv,"prefv_"+str(nit)+".pt")
 
-def wikitextPerplexity():
+def wikitextPerplexity(model):
     # perplexity of BloomZ here on Wikitext-2-raw test is 198, which is too high...
     # on C4 perplexity is about 38, still quite high...
 
@@ -509,7 +511,6 @@ def wikitextPerplexity():
         utts.append("Foil plaid lycra and spandex shortall with metallic slinky insets. Attached metallic elastic belt with O-ring. Headband included. Great hip hop or jazz dance costume. Made in the USA.")
         utts.append("How many backlinks per day for new site? Discussion in 'Black Hat SEO' started by Omoplata, Dec 3, 2010. 1) for a newly created site, what's the max # backlinks per day I should do to be safe? 2) how long do I have to let my site age before I can start making more blinks? I did about 6000 forum profiles every 24 hours for 10 days for one of my sites which had a brand new domain. There is three backlinks for every of these forum profile so thats 18 000 backlinks every 24 hours and nothing happened in terms of being penalized or sandboxed. This is now maybe 3 months ago and the site is ranking on first page for a lot of my targeted keywords. build more you can in starting but do manual submission and not spammy type means manual + relevant to the post.. then after 1 month you can make a big blast.. Wow, dude, you built 18k backlinks a day on a brand new site? How quickly did you rank up? What kind of competition/searches did those keywords have?")
         utts.append("The Denver Board of Education opened the 2017-18 school year with an update on projects that include new construction, upgrades, heat mitigation and quality learning environments. We are excited that Denver students will be the beneficiaries of a four year, $572 million General Obligation Bond. Since the passage of the bond, our construction team has worked to schedule the projects over the four-year term of the bond. Denver voters on Tuesday approved bond and mill funding measures for students in Denver Public Schools, agreeing to invest $572 million in bond funding to build and improve schools and $56.6 million in operating dollars to support proven initiatives, such as early literacy. Denver voters say yes to bond and mill levy funding support for DPS students and schools. Click to learn more about the details of the voter-approved bond measure. Denver voters on Nov. 8 approved bond and mill funding measures for DPS students and schools. Learn more about what’s included in the mill levy measure.")
-    model = initModel()
     toker = transformers.models.bloom.tokenization_bloom_fast.BloomTokenizerFast.from_pretrained(wd)
     tk = time.time()
     losses = run_forward(model, toker, utts[0:20])
@@ -533,10 +534,23 @@ def train_soft_prompt(nit=0):
     opt.step()
     print("delta_prefix",torch.norm(model.transformer.word_embeddings.prefv-prefv0).item())
 
+def magnitude_pruning(b):
+    s = 0.1 # 10% sparsity
+    print("pruning layer",b.numLayer,s)
+    for n,p in b.named_parameters():
+        if len(p.shape)==2:
+            print(n,p.shape)
+            # prune row-wise as suggested in Wanda paper
+            metric = p.abs()
+            _, sorted_idx = torch.sort(metric, dim=1)
+            pruned_idx = sorted_idx[:,:int(p.shape[1] * s)]
+            p.scatter_(dim=1, index=pruned_idx, src=0)
 
 # ###################################
 
-wikitextPerplexity()
+model = initModel()
+for b in allblocks: b.dopruning = True
+wikitextPerplexity(model)
 
 exit()
 
