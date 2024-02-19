@@ -18,7 +18,8 @@ wd = "/home/xtof/nvme/bloomz/"
 
 prefix = 5
 niters = 100
-LR = 0.3
+LR = 0.1
+pruning_sparsity = 0.2
 
 # note: matmul btw 57344x14336 takes 0.62s in fp32 but 3.52s in bf16 !
 # pour pouvoir stocker les + gros poids en bf16, l'idee est de convertir en fp32 juste avant
@@ -538,8 +539,7 @@ def train_soft_prompt(nit=0):
     print("delta_prefix",torch.norm(model.transformer.word_embeddings.prefv-prefv0).item())
 
 def magnitude_pruning(b):
-    s = 0.1 # 10% sparsity
-    print("pruning layer",b.numLayer,s)
+    print("pruning layer",b.numLayer,pruning_sparsity)
     with torch.no_grad():
         for n,p in b.named_parameters():
             if len(p.shape)==2:
@@ -547,7 +547,7 @@ def magnitude_pruning(b):
                 # prune row-wise as suggested in Wanda paper
                 metric = p.abs()
                 _, sorted_idx = torch.sort(metric, dim=1)
-                pruned_idx = sorted_idx[:,:int(p.shape[1] * s)]
+                pruned_idx = sorted_idx[:,:int(p.shape[1] * pruning_sparsity)]
                 print("dbug",p.requires_grad)
                 p.scatter_(dim=1, index=pruned_idx, value=0)
 
