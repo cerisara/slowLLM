@@ -542,7 +542,7 @@ def train_soft_prompt(nit=0):
 
 def retrain_matrix(w0,w):
     w.requires_grad=True
-    opt = torch.optim.SGD(w,lr=0.01)
+    opt = torch.optim.SGD([w],lr=0.01)
     opt.zero_grad()
     x = torch.rand(w.shape[1])
     y0 = w0 @ x
