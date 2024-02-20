@@ -545,17 +545,15 @@ def magnitude_pruning(b):
     with torch.no_grad():
         for n,p in b.named_parameters():
             if len(p.shape)==2:
+                if p.dtype=="meta": continue
                 print(n,p.shape)
                 # prune row-wise as suggested in Wanda paper
                 metric = p.abs()
                 _, sorted_idx = torch.sort(metric, dim=1)
                 pruned_idx = sorted_idx[:,:int(p.shape[1] * pruning_sparsity)]
                 p.scatter_(dim=1, index=pruned_idx, value=0)
-                print("debug",n,p.shape,p.device,p.dtype)
-                pp = p.float()
-                print("ddbug",n,pp.shape,pp.device,pp.dtype)
-                ra = torch.linalg.matrix_rank(pp).item()
-                print("pruning",p.requires_grad,ra)
+                ra = torch.linalg.svd_vals(p.float()).item()
+                print("pruning",n,p.requires_grad,' '.join([x.item() for x in ra]))
 
 # ###################################
 
