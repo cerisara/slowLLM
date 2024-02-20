@@ -540,7 +540,10 @@ def train_soft_prompt(nit=0):
     opt.step()
     print("delta_prefix",torch.norm(model.transformer.word_embeddings.prefv-prefv0).item())
 
-def retrain_matrix(w0,w):
+def retrain_matrix(p0,p):
+    w0 = p0.to(torch.float32, copy=True)
+    w = p.to(torch.float32, copy=True)
+    w0.requires_grad=False
     w.requires_grad=True
     opt = torch.optim.SGD([w],lr=0.01)
     opt.zero_grad()
@@ -548,7 +551,7 @@ def retrain_matrix(w0,w):
     y0 = w0 @ x
     y = w @ x
     loss = torch.nn.functional.mse_loss(y,y0)
-    loss.backward()
+    loss.backward() # est-ce que le backward s'arrete bien a w ?
     opt.step()
 
 def magnitude_pruning(b):
