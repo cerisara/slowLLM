@@ -560,6 +560,7 @@ def retrain_matrix(p0,p):
 def magnitude_pruning(b):
     print("pruning layer",b.numLayer,pruning_sparsity)
     # with torch.no_grad():
+    # WARNING: ce code depasse les 50GB cd RAM !
     if True:
         for n,p in b.named_parameters():
             p.requires_grad=False
