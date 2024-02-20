@@ -570,9 +570,9 @@ def magnitude_pruning(b):
                 pruned_idx = sorted_idx[:,:int(p.shape[1] * pruning_sparsity)]
                 p0 = torch.clone(p).detach()
                 p.scatter_(dim=1, index=pruned_idx, value=0)
-                retrain_matrix(p0,p)
+                pp = retrain_matrix(p0,p)
                 # do not retrain pruned weights
-                p.scatter_(dim=1, index=pruned_idx, value=0)
+                pp.scatter_(dim=1, index=pruned_idx, value=0)
 
 # ###################################
 
