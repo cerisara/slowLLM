@@ -561,6 +561,7 @@ def magnitude_pruning(b):
     # with torch.no_grad():
     if True:
         for n,p in b.named_parameters():
+            p.requires_grad=False
             if len(p.shape)==2:
                 if p.dtype=="meta": continue
                 print(n,p.shape)
@@ -573,6 +574,7 @@ def magnitude_pruning(b):
                 pp = retrain_matrix(p0,p)
                 # do not retrain pruned weights
                 pp.scatter_(dim=1, index=pruned_idx, value=0)
+                p.copy_(pp)
 
 # ###################################
 
