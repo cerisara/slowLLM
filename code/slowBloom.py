@@ -19,7 +19,7 @@ wd = "/home/xtof/nvme/bloomz/"
 prefix = 5
 niters = 100
 LR = 0.1
-pruning_sparsity = 0.4
+pruning_sparsity = 0.
 
 # note: matmul btw 57344x14336 takes 0.62s in fp32 but 3.52s in bf16 !
 # pour pouvoir stocker les + gros poids en bf16, l'idee est de convertir en fp32 juste avant
