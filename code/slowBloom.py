@@ -551,12 +551,15 @@ def retrain_matrix(p0,p):
     y0 = w0 @ x
     y = w @ x
     loss = torch.nn.functional.mse_loss(y,y0)
-    loss.backward() # est-ce que le backward s'arrete bien a w ?
+    loss.backward()
     opt.step()
+    pp = w.to(p.dtype)
+    return pp
 
 def magnitude_pruning(b):
     print("pruning layer",b.numLayer,pruning_sparsity)
-    with torch.no_grad():
+    # with torch.no_grad():
+    if True:
         for n,p in b.named_parameters():
             if len(p.shape)==2:
                 if p.dtype=="meta": continue
