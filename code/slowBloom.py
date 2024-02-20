@@ -552,7 +552,9 @@ def magnitude_pruning(b):
                 pruned_idx = sorted_idx[:,:int(p.shape[1] * pruning_sparsity)]
                 p.scatter_(dim=1, index=pruned_idx, value=0)
                 print("debug",n,p.shape,p.device,p.dtype)
-                # ra = torch.linalg.matrix_rank(p.float()).item()
+                pp = p.float()
+                print("ddbug",n,pp.shape,pp.device,pp.dtype)
+                ra = torch.linalg.matrix_rank(pp).item()
                 print("pruning",p.requires_grad,ra)
 
 # ###################################
