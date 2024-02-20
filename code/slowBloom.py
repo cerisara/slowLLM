@@ -19,7 +19,7 @@ wd = "/home/xtof/nvme/bloomz/"
 prefix = 5
 niters = 100
 LR = 0.1
-pruning_sparsity = 0.
+pruning_sparsity = 0.4
 
 # note: matmul btw 57344x14336 takes 0.62s in fp32 but 3.52s in bf16 !
 # pour pouvoir stocker les + gros poids en bf16, l'idee est de convertir en fp32 juste avant
@@ -540,6 +540,17 @@ def train_soft_prompt(nit=0):
     opt.step()
     print("delta_prefix",torch.norm(model.transformer.word_embeddings.prefv-prefv0).item())
 
+def retrain_matrix(w0,w):
+    w.requires_grad=True
+    opt = torch.optim.SGD(w.parameters(),lr=0.01)
+    opt.zero_grad()
+    x = torch.rand(w.shape[1])
+    y0 = w0 @ x
+    y = w @ x
+    loss = torch.nn.functional.mse_loss(y,y0)
+    loss.backward()
+    opt.step()
+
 def magnitude_pruning(b):
     print("pruning layer",b.numLayer,pruning_sparsity)
     with torch.no_grad():
@@ -551,9 +562,11 @@ def magnitude_pruning(b):
                 metric = p.abs()
                 _, sorted_idx = torch.sort(metric, dim=1)
                 pruned_idx = sorted_idx[:,:int(p.shape[1] * pruning_sparsity)]
+                p0 = torch.clone(p).detach()
                 p.scatter_(dim=1, index=pruned_idx, value=0)
-                ra = torch.linalg.svdvals(p.float())
-                print("pruning",n,p.requires_grad,' '.join([str(x.item()) for x in ra]))
+                retrain_matrix(p0,p)
+                # do not retrain pruned weights
+                p.scatter_(dim=1, index=pruned_idx, value=0)
 
 # ###################################
 
