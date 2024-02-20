@@ -563,7 +563,7 @@ def magnitude_pruning(b):
         for n,p in b.named_parameters():
             p.requires_grad=False
             if len(p.shape)==2:
-                if p.device=="meta": continue
+                if p.is_meta: continue
                 print(n,p.shape)
                 # prune row-wise as suggested in Wanda paper
                 metric = p.abs()
