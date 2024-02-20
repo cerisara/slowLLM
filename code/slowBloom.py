@@ -551,6 +551,7 @@ def retrain_matrix(p0,p):
     y0 = w0 @ x
     y = w @ x
     loss = torch.nn.functional.mse_loss(y,y0)
+    print("MSE",loss.item())
     loss.backward()
     opt.step()
     pp = w.to(p.dtype)
@@ -572,9 +573,9 @@ def magnitude_pruning(b):
                 p0 = torch.clone(p).detach()
                 p.scatter_(dim=1, index=pruned_idx, value=0)
                 pp = retrain_matrix(p0,p)
-                # do not retrain pruned weights
-                pp.scatter_(dim=1, index=pruned_idx, value=0)
                 p.copy_(pp)
+                # do not retrain pruned weights
+                p.scatter_(dim=1, index=pruned_idx, value=0)
 
 # ###################################
 
