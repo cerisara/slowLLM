@@ -188,7 +188,6 @@ class MyBloomBlock(transformers.models.bloom.modeling_bloom.BloomBlock):
         self.self_attention.query_key_value = MyLinearAtt('satt',self.self_attention.query_key_value)
         self.mlp.dense_h_to_4h = MyLinearAtt('h_4h',self.mlp.dense_h_to_4h)
         self.mlp.dense_4h_to_h = MyLinearAtt('4h_h',self.mlp.dense_4h_to_h)
-        self.dopruning = False
 
     def saveOutputs(self,b):
         if b: self.latentOutputs = LatentOutputs()
@@ -355,7 +354,6 @@ def run_forward(model, toker, utts, prepare_backward=False):
 
     for l in range(len(allblocks)):
         allblocks[l].loadLayer()
-        if allblocks[l].dopruning: magnitude_pruning(allblocks[l])
         allblocks[l].saveOutputs(True)
         for s in utts:
             prompt = toker(s)
@@ -381,7 +379,7 @@ def run_forward(model, toker, utts, prepare_backward=False):
         # we can just clone the labels, they're shifted in the forward pass: https://github.com/seungeunrho/transformers/blob/988fab92806dc8db0b0218018ee5a582f4545193/src/transformers/models/bloom/modeling_bloom.py#L907
         labels = x.clone()
         out = model(x,labels=labels)
-        losses.append(out.loss.view(-1))
+        losses.append((out.loss.view(-1),len(tokids)))
         print("LOSS",ui,out.loss.view(-1),s)
     return losses
 
@@ -521,7 +519,9 @@ def wikitextPerplexity(model):
     tk = time.time()
     losses = run_forward(model, toker, utts[0:20])
     tl = time.time()
-    ppl = torch.exp(torch.stack(losses).mean())
+    lossn = [lo[0]*float(lo[1]) for lo in losses]
+    ntot = float(sum([lo[1] for lo in losses]))
+    ppl = torch.exp(torch.stack(lossn).sum()/ntot)
     print("time forward PPL",tl-tk, ppl, losses)
 
 def train_soft_prompt(nit=0):
@@ -560,31 +560,9 @@ def retrain_matrix(p0,p):
     pp = w.to(p.dtype)
     return pp
 
-def magnitude_pruning(b):
-    print("pruning layer",b.numLayer,pruning_sparsity)
-    # with torch.no_grad():
-    # WARNING: ce code depasse les 50GB cd RAM !
-    if True:
-        for n,p in b.named_parameters():
-            p.requires_grad=False
-            if len(p.shape)==2:
-                if p.is_meta: continue
-                print(n,p.shape)
-                # prune row-wise as suggested in Wanda paper
-                metric = p.abs()
-                _, sorted_idx = torch.sort(metric, dim=1)
-                pruned_idx = sorted_idx[:,:int(p.shape[1] * pruning_sparsity)]
-                p0 = torch.clone(p).detach()
-                p.scatter_(dim=1, index=pruned_idx, value=0)
-                pp = retrain_matrix(p0,p)
-                p.copy_(pp)
-                # do not retrain pruned weights
-                p.scatter_(dim=1, index=pruned_idx, value=0)
-
 # ###################################
 
 model = initModel()
-for b in allblocks: b.dopruning = True
 wikitextPerplexity(model)
 
 exit()
