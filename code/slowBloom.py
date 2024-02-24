@@ -540,26 +540,6 @@ def train_soft_prompt(nit=0):
     opt.step()
     print("delta_prefix",torch.norm(model.transformer.word_embeddings.prefv-prefv0).item())
 
-def retrain_matrix(p0,p):
-    # cela ne sert a rien de retrain 1 matrice avec cette MSE loss, car le minimum est le point d'origine.
-    # il faudrait retrain avec la loss finale (cf. OBD), ou une loss intermediaire (MSE apres la layer ?) ou autre critere
-    w0 = p0.to(torch.float32, copy=True)
-    w = p.to(torch.float32, copy=True)
-    w0.requires_grad=False
-    w.requires_grad=True
-    opt = torch.optim.SGD([w],lr=0.001)
-    for ep in range(10):
-        opt.zero_grad()
-        x = (torch.rand(w.shape[1])-0.5)*0.1
-        y0 = w0 @ x
-        y = w @ x
-        loss = torch.nn.functional.mse_loss(y,y0)
-        print("MSE",ep,loss.item())
-        loss.backward()
-        opt.step()
-    pp = w.to(p.dtype)
-    return pp
-
 # ###################################
 
 model = initModel()
