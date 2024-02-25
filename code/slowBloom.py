@@ -16,10 +16,9 @@ wd = "/mnt/dos/xtof/"
 wd = "/home/xtof/nas1/TALC/Synalp/Models/bloomz/"
 wd = "/home/xtof/nvme/bloomz/"
 
-prefix = 5
+prefix = 0
 niters = 100
 LR = 0.1
-pruning_sparsity = 0.4
 
 # note: matmul btw 57344x14336 takes 0.62s in fp32 but 3.52s in bf16 !
 # pour pouvoir stocker les + gros poids en bf16, l'idee est de convertir en fp32 juste avant
@@ -456,11 +455,8 @@ def run_backward(model, losses,nit):
         torch.save(model.transformer.word_embeddings.prefv,"prefv_"+str(nit)+".pt")
 
 def wikitextPerplexity(model):
-    # New perplexity figure on a few utts from Wikitext, by avg per token across all utts: 21.7
-    # all perplexity below are computed by first avging per token within each utt, then avging across utts
-
-    # perplexity of BloomZ here on Wikitext-2-raw test is 198, which is too high...
-    # on C4 perplexity is about 38, still quite high...
+    # perplexity on a few utts from Wikitext, by avg per token across all utts: 14.5
+    # TODO try with Bloom on full raw-wikitext2 to compare with sparseGPT paper
 
     # comparison with bloomz-7b on Jean Zay
     # bloomz-7b = PPL(C4) = 27
@@ -471,35 +467,6 @@ def wikitextPerplexity(model):
     # mistral-7b PPL(Wikitext-all) = 26.6
     # bloom-7b PPL(Wikitext-all) = 55 (plus 7 nan)
     # bloomz-7b PPL(Wikitext-all) = 58.9 (plus 7 nan)
-
-    # perplexity des 10 premieres utts de wikitext avec bloomz-7b: 
-    # 4456.86
-    # 286.288
-    # 109.33
-    # 111.718
-    # 96.9563
-    # 77.2953
-    # 64.8941
-    # 65.9469
-    # 56.8611
-    # 51.063
-
-    # et avec slow-Bloomz-176b: (certaines phrases sont tres mal predites, la plupart des autres bien mieux !)
-    # !!! en fait, ce sont les phrases courtes, les "titres markdown", qui sont tres mal predites !
-    # 
-    # base      MP 10%      MP 20%      MP 30%      MP 40%      MP 50%
-    # 785048
-    # 25.1058   24.1673     23.3851     23.7884     22.0806     26.0678
-    # 16.1045   15.6928     14.7302     15.2427     15.3023     17.3831
-    # 237139    
-    # 36640.2
-    # 30.487    29.2389     30.4717     31.3935     34.8168     38.5286
-    # 25.8084   25.3759     25.2443     25.3581     24.2181     28.1121
-    # 27617.4
-    # 18.8705   18.6044     17.8785     17.4772     18.1233     20.9513
-    # 19.5916   19.2132     18.4784     19.0907     19.244      22.9496
-    #
-    # conclusion: it's clear that the reasonable limit is around 40% for unstructured magnitude pruning, as stated in the litarature
 
     utts = []
     if False:
