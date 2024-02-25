@@ -457,6 +457,7 @@ def run_backward(model, losses,nit):
 
 def wikitextPerplexity(model):
     # New perplexity figure on a few utts from Wikitext, by avg per token across all utts: 21.7
+    # same on C4: 38.1 (note: short utts have high ppl!)
     # all perplexity below are computed by first avging per token within each utt, then avging across utts
 
     # perplexity of BloomZ here on Wikitext-2-raw test is 198, which is too high...
