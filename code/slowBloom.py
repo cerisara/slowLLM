@@ -459,6 +459,7 @@ def wikitextPerplexity(model):
     # New perplexity figure on a few utts from Wikitext, by avg per token across all utts: 21.7
     # same on C4: 38.1 (note: short utts have high ppl!)
     # all perplexity below are computed by first avging per token within each utt, then avging across utts
+    # the paper sparseGPT gives Bloom-176 ppl on raw-WikiText2 ~= 8 with ppl computed as in https://huggingface.co/docs/transformers/perplexity
 
     # perplexity of BloomZ here on Wikitext-2-raw test is 198, which is too high...
     # on C4 perplexity is about 38, still quite high...
